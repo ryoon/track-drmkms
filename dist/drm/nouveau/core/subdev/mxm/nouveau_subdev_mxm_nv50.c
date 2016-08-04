@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_mxm_nv50.c,v 1.3 2016/04/22 20:19:30 riastradh Exp $	*/
+
 /*
  * Copyright 2011 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_mxm_nv50.c,v 1.3 2016/04/22 20:19:30 riastradh Exp $");
 
 #include <subdev/mxm.h>
 #include <subdev/bios.h>
@@ -165,6 +170,7 @@ mxm_dcb_sanitise_entry(struct nouveau_bios *bios, void *data, int idx, u16 pdcb)
 		break;
 	case 0x0e: /* eDP, falls through to DPint */
 		ctx.outp[1] |= 0x00010000;
+		/*FALLTHROUGH*/
 	case 0x07: /* DP internal, wtf is this?? HP8670w */
 		ctx.outp[1] |= 0x00000004; /* use_power_scripts? */
 		type = DCB_CONNECTOR_eDP;
@@ -184,7 +190,7 @@ mxm_show_unmatched(struct nouveau_mxm *mxm, u8 *data, void *info)
 {
 	u64 desc = *(u64 *)data;
 	if ((desc & 0xf0) != 0xf0)
-	nv_info(mxm, "unmatched output device 0x%016llx\n", desc);
+	nv_info(mxm, "unmatched output device 0x%016"PRIx64"\n", desc);
 	return true;
 }
 

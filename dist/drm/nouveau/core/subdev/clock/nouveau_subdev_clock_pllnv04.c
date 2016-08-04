@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_clock_pllnv04.c,v 1.1.1.1 2014/08/06 12:36:29 riastradh Exp $	*/
+
 /*
  * Copyright 1993-2003 NVIDIA, Corporation
  * Copyright 2007-2009 Stuart Bennett
@@ -20,6 +22,9 @@
  * OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_clock_pllnv04.c,v 1.1.1.1 2014/08/06 12:36:29 riastradh Exp $");
 
 #include <subdev/bios.h>
 #include <subdev/bios/pll.h>

@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_fifo_base.c,v 1.5 2016/05/11 02:28:33 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_fifo_base.c,v 1.5 2016/05/11 02:28:33 riastradh Exp $");
 
 #include <core/client.h>
 #include <core/object.h>
@@ -86,10 +91,75 @@ nouveau_fifo_channel_create_(struct nouveau_object *parent,
 	}
 
 	/* map fifo control registers */
+#ifdef __NetBSD__
+	if (bar == 0) {
+		/*
+		 * We already map BAR 0 in the engine device base, so
+		 * grab a subregion of that.
+		 */
+		bus_space_tag_t mmiot = nv_subdev(device)->mmiot;
+		bus_space_handle_t mmioh = nv_subdev(device)->mmioh;
+		bus_size_t mmiosz = nv_subdev(device)->mmiosz;
+
+		/* Check whether it lies inside the region.  */
+		if (mmiosz < addr ||
+		    mmiosz - addr < chan->chid*size ||
+		    mmiosz - addr - chan->chid*size < size) {
+			ret = EIO;
+			nv_error(priv, "fifo channel out of range:"
+			    " addr 0x%"PRIxMAX
+			    " chid 0x%"PRIxMAX" size 0x%"PRIxMAX
+			    " mmiosz 0x%"PRIxMAX"\n",
+			    (uintmax_t)addr,
+			    (uintmax_t)chan->chid, (uintmax_t)size,
+			    (uintmax_t)mmiosz);
+			return ret;
+		}
+
+		/* Grab a subregion.  */
+		/* XXX errno NetBSD->Linux */
+		ret = -bus_space_subregion(mmiot, mmioh,
+		    (addr + chan->chid*size), size, &chan->bsh);
+		if (ret) {
+			nv_error(priv, "bus_space_subregion failed: %d\n",
+			    ret);
+			return ret;
+		}
+
+		/* Success!  No need to unmap a subregion.  */
+		chan->mapped = false;
+		chan->bst = mmiot;
+	} else {
+		chan->bst = nv_device_resource_tag(device, bar);
+		/* XXX errno NetBSD->Linux */
+		ret = -bus_space_map(chan->bst,
+		    (nv_device_resource_start(device, bar) +
+			addr + (chan->chid * size)),
+		    size, 0, &chan->bsh);
+		if (ret) {
+			nv_error(priv, "failed to map fifo channel:"
+			    " bar %d addr %"PRIxMAX" + %"PRIxMAX
+			    " + (%"PRIxMAX" * %"PRIxMAX") = %"PRIxMAX
+			    " size %"PRIxMAX": %d\n",
+			    bar,
+			    (uintmax_t)nv_device_resource_start(device, bar),
+			    (uintmax_t)addr,
+			    (uintmax_t)chan->chid,
+			    (uintmax_t)size,
+			    (uintmax_t)(nv_device_resource_start(device, bar) +
+				addr + (chan->chid * size)),
+			    (uintmax_t)size,
+			    ret);
+			return ret;
+		}
+		chan->mapped = true;
+	}
+#else
 	chan->user = ioremap(nv_device_resource_start(device, bar) + addr +
 			     (chan->chid * size), size);
 	if (!chan->user)
 		return -EFAULT;
+#endif
 
 	nouveau_event_trigger(priv->cevent, 0);
 
@@ -103,7 +173,14 @@ nouveau_fifo_channel_destroy(struct nouveau_fifo_chan *chan)
 	struct nouveau_fifo *priv = (void *)nv_object(chan)->engine;
 	unsigned long flags;
 
+#ifdef __NetBSD__
+	if (chan->mapped) {
+		bus_space_unmap(chan->bst, chan->bsh, chan->size);
+		chan->mapped = false;
+	}
+#else
 	iounmap(chan->user);
+#endif
 
 	spin_lock_irqsave(&priv->lock, flags);
 	priv->channel[chan->chid] = NULL;
@@ -125,14 +202,22 @@ u32
 _nouveau_fifo_channel_rd32(struct nouveau_object *object, u64 addr)
 {
 	struct nouveau_fifo_chan *chan = (void *)object;
+#ifdef __NetBSD__
+	return bus_space_read_4(chan->bst, chan->bsh, addr);
+#else
 	return ioread32_native(chan->user + addr);
+#endif
 }
 
 void
 _nouveau_fifo_channel_wr32(struct nouveau_object *object, u64 addr, u32 data)
 {
 	struct nouveau_fifo_chan *chan = (void *)object;
+#ifdef __NetBSD__
+	bus_space_write_4(chan->bst, chan->bsh, addr, data);
+#else
 	iowrite32_native(data, chan->user + addr);
+#endif
 }
 
 static int

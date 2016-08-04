@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_core_handle.c,v 1.2 2014/08/06 13:35:13 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_core_handle.c,v 1.2 2014/08/06 13:35:13 riastradh Exp $");
 
 #include <core/object.h>
 #include <core/handle.h>
@@ -65,7 +70,7 @@ fail:
 int
 nouveau_handle_fini(struct nouveau_handle *handle, bool suspend)
 {
-	static char *name[2] = { "fini", "suspend" };
+	static const char *name[2] = { "fini", "suspend" };
 	struct nouveau_handle *item;
 	int ret;
 

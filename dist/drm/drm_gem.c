@@ -36,8 +36,15 @@
 #include <linux/pagemap.h>
 #include <linux/shmem_fs.h>
 #include <linux/dma-buf.h>
+#include <linux/err.h>
+#include <linux/export.h>
+#include <asm/bug.h>
 #include <drm/drmP.h>
 #include <drm/drm_vma_manager.h>
+
+#ifdef __NetBSD__
+#include <uvm/uvm_extern.h>
+#endif
 
 /** @file drm_gem.c
  *
@@ -93,7 +100,11 @@ drm_gem_init(struct drm_device *dev)
 {
 	struct drm_vma_offset_manager *vma_offset_manager;
 
+#ifdef __NetBSD__
+	linux_mutex_init(&dev->object_name_lock);
+#else
 	mutex_init(&dev->object_name_lock);
+#endif
 	idr_init(&dev->object_name_idr);
 
 	vma_offset_manager = kzalloc(sizeof(*vma_offset_manager), GFP_KERNEL);
@@ -117,6 +128,11 @@ drm_gem_destroy(struct drm_device *dev)
 	drm_vma_offset_manager_destroy(dev->vma_offset_manager);
 	kfree(dev->vma_offset_manager);
 	dev->vma_offset_manager = NULL;
+
+	idr_destroy(&dev->object_name_idr);
+#ifdef __NetBSD__
+	linux_mutex_destroy(&dev->object_name_lock);
+#endif
 }
 
 /**
@@ -131,15 +147,28 @@ drm_gem_destroy(struct drm_device *dev)
 int drm_gem_object_init(struct drm_device *dev,
 			struct drm_gem_object *obj, size_t size)
 {
+#ifndef __NetBSD__
 	struct file *filp;
+#endif
 
 	drm_gem_private_object_init(dev, obj, size);
 
+#ifdef __NetBSD__
+	obj->gemo_shm_uao = uao_create(size, 0);
+	/*
+	 * XXX This is gross.  We ought to do it the other way around:
+	 * set the uao to have the main uvm object's lock.  However,
+	 * uvm_obj_setlock is not safe on uvm_aobjs.
+	 */
+	mutex_obj_hold(obj->gemo_shm_uao->vmobjlock);
+	uvm_obj_setlock(&obj->gemo_uvmobj, obj->gemo_shm_uao->vmobjlock);
+#else
 	filp = shmem_file_setup("drm mm object", size, VM_NORESERVE);
 	if (IS_ERR(filp))
 		return PTR_ERR(filp);
 
 	obj->filp = filp;
+#endif
 
 	return 0;
 }
@@ -161,18 +190,30 @@ void drm_gem_private_object_init(struct drm_device *dev,
 	BUG_ON((size & (PAGE_SIZE - 1)) != 0);
 
 	obj->dev = dev;
+#ifdef __NetBSD__
+	obj->gemo_shm_uao = NULL;
+	KASSERT(drm_core_check_feature(dev, DRIVER_GEM));
+	KASSERT(dev->driver->gem_uvm_ops != NULL);
+	uvm_obj_init(&obj->gemo_uvmobj, dev->driver->gem_uvm_ops, true, 1);
+#else
 	obj->filp = NULL;
+#endif
 
 	kref_init(&obj->refcount);
 	obj->handle_count = 0;
 	obj->size = size;
+#ifdef __NetBSD__
+	drm_vma_node_init(&obj->vma_node);
+#else
 	drm_vma_node_reset(&obj->vma_node);
+#endif
 }
 EXPORT_SYMBOL(drm_gem_private_object_init);
 
 static void
 drm_gem_remove_prime_handles(struct drm_gem_object *obj, struct drm_file *filp)
 {
+#ifndef __NetBSD__		/* XXX drm prime */
 	/*
 	 * Note: obj->dma_buf can't disappear as long as we still hold a
 	 * handle reference in obj->handle_count.
@@ -183,6 +224,7 @@ drm_gem_remove_prime_handles(struct drm_gem_object *obj, struct drm_file *filp)
 						   obj->dma_buf);
 	}
 	mutex_unlock(&filp->prime.lock);
+#endif
 }
 
 /**
@@ -208,11 +250,13 @@ static void drm_gem_object_handle_free(struct drm_gem_object *obj)
 
 static void drm_gem_object_exported_dma_buf_free(struct drm_gem_object *obj)
 {
+#ifndef __NetBSD__
 	/* Unbreak the reference cycle if we have an exported dma_buf. */
 	if (obj->dma_buf) {
 		dma_buf_put(obj->dma_buf);
 		obj->dma_buf = NULL;
 	}
+#endif
 }
 
 static void
@@ -443,6 +487,40 @@ EXPORT_SYMBOL(drm_gem_create_mmap_offset);
  * @obj: obj in question
  * @gfpmask: gfp mask of requested pages
  */
+#ifdef __NetBSD__
+struct page **
+drm_gem_get_pages(struct drm_gem_object *obj, gfp_t gfpmask)
+{
+	struct pglist pglist;
+	struct vm_page *vm_page;
+	struct page **pages;
+	unsigned i;
+	int ret;
+
+	KASSERT((obj->size & (PAGE_SIZE - 1)) != 0);
+
+	pages = drm_malloc_ab(obj->size >> PAGE_SHIFT, sizeof(*pages));
+	if (pages == NULL) {
+		ret = -ENOMEM;
+		goto fail0;
+	}
+
+	TAILQ_INIT(&pglist);
+	/* XXX errno NetBSD->Linux */
+	ret = -uvm_obj_wirepages(obj->gemo_shm_uao, 0, obj->size, &pglist);
+	if (ret)
+		goto fail1;
+
+	i = 0;
+	TAILQ_FOREACH(vm_page, &pglist, pageq.queue)
+		pages[i++] = container_of(vm_page, struct page, p_vmp);
+
+	return pages;
+
+fail1:	drm_free_large(pages);
+fail0:	return ERR_PTR(ret);
+}
+#else
 struct page **drm_gem_get_pages(struct drm_gem_object *obj, gfp_t gfpmask)
 {
 	struct inode *inode;
@@ -503,6 +581,7 @@ fail:
 	drm_free_large(pages);
 	return ERR_CAST(p);
 }
+#endif
 EXPORT_SYMBOL(drm_gem_get_pages);
 
 /**
@@ -512,6 +591,21 @@ EXPORT_SYMBOL(drm_gem_get_pages);
  * @dirty: if true, pages will be marked as dirty
  * @accessed: if true, the pages will be marked as accessed
  */
+#ifdef __NetBSD__
+void
+drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages, bool dirty,
+    bool accessed __unused /* XXX */)
+{
+	unsigned i;
+
+	for (i = 0; i < (obj->size >> PAGE_SHIFT); i++) {
+		if (dirty)
+			pages[i]->p_vmp.flags &= ~PG_CLEAN;
+	}
+
+	uvm_obj_unwirepages(obj->gemo_shm_uao, 0, obj->size);
+}
+#else
 void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 		bool dirty, bool accessed)
 {
@@ -538,6 +632,7 @@ void drm_gem_put_pages(struct drm_gem_object *obj, struct page **pages,
 
 	drm_free_large(pages);
 }
+#endif
 EXPORT_SYMBOL(drm_gem_put_pages);
 
 /** Returns a reference to the object named by the handle. */
@@ -709,8 +804,10 @@ drm_gem_object_release_handle(int id, void *ptr, void *data)
 	struct drm_gem_object *obj = ptr;
 	struct drm_device *dev = obj->dev;
 
+#ifndef __NetBSD__			/* XXX drm prime */
 	if (drm_core_check_feature(dev, DRIVER_PRIME))
 		drm_gem_remove_prime_handles(obj, file_priv);
+#endif
 	drm_vma_node_revoke(&obj->vma_node, file_priv->filp);
 
 	if (dev->driver->gem_close_object)
@@ -736,15 +833,27 @@ drm_gem_release(struct drm_device *dev, struct drm_file *file_private)
 	idr_for_each(&file_private->object_idr,
 		     &drm_gem_object_release_handle, file_private);
 	idr_destroy(&file_private->object_idr);
+#ifdef __NetBSD__
+	spin_lock_destroy(&file_private->table_lock);
+#endif
 }
 
 void
 drm_gem_object_release(struct drm_gem_object *obj)
 {
+#ifndef __NetBSD__
 	WARN_ON(obj->dma_buf);
+#endif
 
+#ifdef __NetBSD__
+	drm_vma_node_destroy(&obj->vma_node);
+	if (obj->gemo_shm_uao)
+		uao_detach(obj->gemo_shm_uao);
+	uvm_obj_destroy(&obj->gemo_uvmobj, true);
+#else
 	if (obj->filp)
 		fput(obj->filp);
+#endif
 
 	drm_gem_free_mmap_offset(obj);
 }
@@ -771,6 +880,8 @@ drm_gem_object_free(struct kref *kref)
 		dev->driver->gem_free_object(obj);
 }
 EXPORT_SYMBOL(drm_gem_object_free);
+
+#ifndef __NetBSD__
 
 void drm_gem_vm_open(struct vm_area_struct *vma)
 {
@@ -901,3 +1012,5 @@ int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	return ret;
 }
 EXPORT_SYMBOL(drm_gem_mmap);
+
+#endif	/* defined(__NetBSD__) */

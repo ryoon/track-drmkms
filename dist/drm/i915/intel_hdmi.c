@@ -30,6 +30,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/hdmi.h>
+#include <asm/io.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
@@ -662,7 +663,7 @@ static void intel_hdmi_mode_set(struct intel_encoder *encoder)
 }
 
 static bool intel_hdmi_get_hw_state(struct intel_encoder *encoder,
-				    enum pipe *pipe)
+				    enum i915_pipe *pipe)
 {
 	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;

@@ -38,6 +38,8 @@
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 #include <linux/acpi.h>
+#include <linux/err.h>
+#include <linux/notifier.h>
 
 /* Private structure for the integrated LVDS support */
 struct intel_lvds_connector {
@@ -66,7 +68,7 @@ static struct intel_lvds_connector *to_lvds_connector(struct drm_connector *conn
 }
 
 static bool intel_lvds_get_hw_state(struct intel_encoder *encoder,
-				    enum pipe *pipe)
+				    enum i915_pipe *pipe)
 {
 	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -401,7 +403,7 @@ static const struct dmi_system_id intel_no_modeset_on_lid[] = {
 		},
 	},
 
-	{ }	/* terminating entry */
+	{ .callback = NULL }	/* terminating entry */
 };
 
 /*
@@ -752,7 +754,7 @@ static const struct dmi_system_id intel_no_lvds[] = {
 		},
 	},
 
-	{ }	/* terminating entry */
+	{ .callback = NULL }	/* terminating entry */
 };
 
 /*
@@ -821,7 +823,7 @@ static const struct dmi_system_id intel_dual_link_lvds[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "MacBookPro8,2"),
 		},
 	},
-	{ }	/* terminating entry */
+	{ .callback = NULL }	/* terminating entry */
 };
 
 bool intel_is_dual_link_lvds(struct drm_device *dev)

@@ -58,8 +58,14 @@ int radeon_driver_unload_kms(struct drm_device *dev)
 	if (rdev == NULL)
 		return 0;
 
+#ifdef __NetBSD__
+	/* XXX ugh */
+	if (rdev->rmmio_size)
+		goto done_free;
+#else
 	if (rdev->rmmio == NULL)
 		goto done_free;
+#endif
 
 	pm_runtime_get_sync(dev->dev);
 
@@ -120,7 +126,7 @@ int radeon_driver_load_kms(struct drm_device *dev, unsigned long flags)
 	 */
 	r = radeon_device_init(rdev, dev, dev->pdev, flags);
 	if (r) {
-		dev_err(&dev->pdev->dev, "Fatal error during GPU init\n");
+		dev_err(dev->dev, "Fatal error during GPU init\n");
 		goto out;
 	}
 
@@ -130,7 +136,7 @@ int radeon_driver_load_kms(struct drm_device *dev, unsigned long flags)
 	 */
 	r = radeon_modeset_init(rdev);
 	if (r)
-		dev_err(&dev->pdev->dev, "Fatal error during modeset init\n");
+		dev_err(dev->dev, "Fatal error during modeset init\n");
 
 	/* Call ACPI methods: require modeset init
 	 * but failure is not fatal
@@ -138,7 +144,7 @@ int radeon_driver_load_kms(struct drm_device *dev, unsigned long flags)
 	if (!r) {
 		acpi_status = radeon_acpi_init(rdev);
 		if (acpi_status)
-		dev_dbg(&dev->pdev->dev,
+		dev_dbg(dev->dev,
 				"Error during ACPI methods call\n");
 	}
 
@@ -537,7 +543,9 @@ static int radeon_info_ioctl(struct drm_device *dev, void *data, struct drm_file
  */
 void radeon_driver_lastclose_kms(struct drm_device *dev)
 {
+#ifndef __NetBSD__		/* XXX radeon vga */
 	vga_switcheroo_process_delayed_switch();
+#endif
 }
 
 /**
@@ -564,7 +572,6 @@ int radeon_driver_open_kms(struct drm_device *dev, struct drm_file *file_priv)
 	if (rdev->family >= CHIP_CAYMAN) {
 		struct radeon_fpriv *fpriv;
 		struct radeon_bo_va *bo_va;
-		int r;
 
 		fpriv = kzalloc(sizeof(*fpriv), GFP_KERNEL);
 		if (unlikely(!fpriv)) {

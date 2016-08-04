@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_core_subdev.c,v 1.3 2016/04/13 07:59:05 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_core_subdev.c,v 1.3 2016/04/13 07:59:05 riastradh Exp $");
 
 #include <core/object.h>
 #include <core/subdev.h>
@@ -74,6 +79,7 @@ nouveau_subdev_destroy(struct nouveau_subdev *subdev)
 {
 	int subidx = nv_hclass(subdev) & 0xff;
 	nv_device(subdev)->subdev[subidx] = NULL;
+	linux_mutex_destroy(&subdev->mutex);
 	nouveau_object_destroy(&subdev->base);
 }
 
@@ -105,7 +111,13 @@ nouveau_subdev_create_(struct nouveau_object *parent,
 	if (parent) {
 		struct nouveau_device *device = nv_device(parent);
 		subdev->debug = nouveau_dbgopt(device->dbgopt, subname);
+#ifdef __NetBSD__
+		subdev->mmiot = nv_subdev(device)->mmiot;
+		subdev->mmioh = nv_subdev(device)->mmioh;
+		subdev->mmiosz = nv_subdev(device)->mmiosz;
+#else
 		subdev->mmio  = nv_subdev(device)->mmio;
+#endif
 	}
 
 	return 0;

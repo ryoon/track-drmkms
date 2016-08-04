@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_xtensa.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $	*/
+
 /*
  * Copyright 2013 Ilia Mirkin
  *
@@ -19,6 +21,9 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_xtensa.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $");
 
 #include <engine/xtensa.h>
 
@@ -131,8 +136,8 @@ _nouveau_xtensa_init(struct nouveau_object *object)
 			return ret;
 		}
 
-		nv_debug(xtensa, "Loading firmware to address: 0x%llx\n",
-			 xtensa->gpu_fw->addr);
+		nv_debug(xtensa, "Loading firmware to address: 0x%"PRIxMAX"\n",
+			 (uintmax_t)xtensa->gpu_fw->addr);
 
 		for (i = 0; i < fw->size / 4; i++)
 			nv_wo32(xtensa->gpu_fw, i * 4, *((u32 *)fw->data + i));

@@ -27,6 +27,7 @@
  *
  */
 
+#include <asm/param.h>
 #include <drm/drmP.h>
 #include "i915_drv.h"
 #include <drm/i915_drm.h>
@@ -498,11 +499,22 @@ static int init_ring_common(struct intel_ring_buffer *ring)
 	else
 		ring_setup_phys_status_page(ring);
 
+	/* Enforce ordering by reading HEAD register back */
+	I915_READ_HEAD(ring);
+
 	/* Initialize the ring. This must happen _after_ we've cleared the ring
 	 * registers with the above sequence (the readback of the HEAD registers
 	 * also enforces ordering), otherwise the hw might lose the new ring
 	 * register values. */
 	I915_WRITE_START(ring, i915_gem_obj_ggtt_offset(obj));
+
+	/* WaClearRingBufHeadRegAtInit:ctg,elk */
+	if (I915_READ_HEAD(ring))
+		DRM_DEBUG("%s initialization failed [head=%08x], fudging\n",
+			  ring->name, I915_READ_HEAD(ring));
+	I915_WRITE_HEAD(ring, 0);
+	(void)I915_READ_HEAD(ring);
+
 	I915_WRITE_CTL(ring,
 			((ring->size - PAGE_SIZE) & RING_NR_PAGES)
 			| RING_VALID);
@@ -563,7 +575,13 @@ init_pipe_control(struct intel_ring_buffer *ring)
 		goto err_unref;
 
 	ring->scratch.gtt_offset = i915_gem_obj_ggtt_offset(ring->scratch.obj);
+#ifdef __NetBSD__
+	ring->scratch.cpu_page =
+	    kmap(container_of(TAILQ_FIRST(&ring->scratch.obj->igo_pageq),
+		    struct page, p_vmp));
+#else
 	ring->scratch.cpu_page = kmap(sg_page(ring->scratch.obj->pages->sgl));
+#endif
 	if (ring->scratch.cpu_page == NULL) {
 		ret = -ENOMEM;
 		goto err_unpin;
@@ -650,7 +668,12 @@ static void render_ring_cleanup(struct intel_ring_buffer *ring)
 		return;
 
 	if (INTEL_INFO(dev)->gen >= 5) {
+#ifdef __NetBSD__
+		kunmap(container_of(TAILQ_FIRST(&ring->scratch.obj->igo_pageq),
+			    struct page, p_vmp));
+#else
 		kunmap(sg_page(ring->scratch.obj->pages->sgl));
+#endif
 		i915_gem_object_ggtt_unpin(ring->scratch.obj);
 	}
 
@@ -1291,7 +1314,11 @@ static void cleanup_status_page(struct intel_ring_buffer *ring)
 	if (obj == NULL)
 		return;
 
+#ifdef __NetBSD__
+	kunmap(container_of(TAILQ_FIRST(&obj->igo_pageq), struct page, p_vmp));
+#else
 	kunmap(sg_page(obj->pages->sgl));
+#endif
 	i915_gem_object_ggtt_unpin(obj);
 	drm_gem_object_unreference(&obj->base);
 	ring->status_page.obj = NULL;
@@ -1319,7 +1346,13 @@ static int init_status_page(struct intel_ring_buffer *ring)
 		goto err_unref;
 
 	ring->status_page.gfx_addr = i915_gem_obj_ggtt_offset(obj);
+#ifdef __NetBSD__
+	ring->status_page.page_addr =
+	    kmap(container_of(TAILQ_FIRST(&obj->igo_pageq), struct page,
+		    p_vmp));
+#else
 	ring->status_page.page_addr = kmap(sg_page(obj->pages->sgl));
+#endif
 	if (ring->status_page.page_addr == NULL) {
 		ret = -ENOMEM;
 		goto err_unpin;
@@ -1370,17 +1403,21 @@ static int intel_init_ring_buffer(struct drm_device *dev,
 	ring->size = 32 * PAGE_SIZE;
 	memset(ring->sync_seqno, 0, sizeof(ring->sync_seqno));
 
+#ifdef __NetBSD__
+	DRM_INIT_WAITQUEUE(&ring->irq_queue, "i915irq");
+#else
 	init_waitqueue_head(&ring->irq_queue);
+#endif
 
 	if (I915_NEED_GFX_HWS(dev)) {
 		ret = init_status_page(ring);
 		if (ret)
-			return ret;
+			goto err_waitqueue;
 	} else {
 		BUG_ON(ring->id != RCS);
 		ret = init_phys_status_page(ring);
 		if (ret)
-			return ret;
+			goto err_waitqueue;
 	}
 
 	obj = NULL;
@@ -1404,6 +1441,17 @@ static int intel_init_ring_buffer(struct drm_device *dev,
 	if (ret)
 		goto err_unpin;
 
+#ifdef __NetBSD__
+	/* XXX errno NetBSD->Linux */
+	ring->bst = dev_priv->dev->pdev->pd_pa.pa_memt;
+	ret = -bus_space_map(ring->bst, (dev_priv->gtt.mappable_base +
+		i915_gem_obj_ggtt_offset(obj)),
+	    ring->size, BUS_SPACE_MAP_PREFETCHABLE, &ring->bsh);
+	if (ret) {
+		DRM_ERROR("Failed to map ringbuffer: %d\n", ret);
+		goto err_unpin;
+	}
+#else
 	ring->virtual_start =
 		ioremap_wc(dev_priv->gtt.mappable_base + i915_gem_obj_ggtt_offset(obj),
 			   ring->size);
@@ -1412,6 +1460,7 @@ static int intel_init_ring_buffer(struct drm_device *dev,
 		ret = -EINVAL;
 		goto err_unpin;
 	}
+#endif
 
 	ret = ring->init(ring);
 	if (ret)
@@ -1430,7 +1479,11 @@ static int intel_init_ring_buffer(struct drm_device *dev,
 	return 0;
 
 err_unmap:
+#ifdef __NetBSD__
+	bus_space_unmap(ring->bst, ring->bsh, ring->size);
+#else
 	iounmap(ring->virtual_start);
+#endif
 err_unpin:
 	i915_gem_object_ggtt_unpin(obj);
 err_unref:
@@ -1438,6 +1491,10 @@ err_unref:
 	ring->obj = NULL;
 err_hws:
 	cleanup_status_page(ring);
+err_waitqueue:
+#ifdef __NetBSD__
+	DRM_DESTROY_WAITQUEUE(&ring->irq_queue);
+#endif
 	return ret;
 }
 
@@ -1458,7 +1515,11 @@ void intel_cleanup_ring_buffer(struct intel_ring_buffer *ring)
 
 	I915_WRITE_CTL(ring, 0);
 
+#ifdef __NetBSD__
+	bus_space_unmap(ring->bst, ring->bsh, ring->size);
+#else
 	iounmap(ring->virtual_start);
+#endif
 
 	i915_gem_object_ggtt_unpin(ring->obj);
 	drm_gem_object_unreference(&ring->obj->base);
@@ -1470,6 +1531,10 @@ void intel_cleanup_ring_buffer(struct intel_ring_buffer *ring)
 		ring->cleanup(ring);
 
 	cleanup_status_page(ring);
+
+#ifdef __NetBSD__
+        DRM_DESTROY_WAITQUEUE(&ring->irq_queue);
+#endif
 }
 
 static int intel_ring_wait_request(struct intel_ring_buffer *ring, int n)
@@ -1575,7 +1640,9 @@ static int ring_wait_for_space(struct intel_ring_buffer *ring, int n)
 
 static int intel_wrap_ring_buffer(struct intel_ring_buffer *ring)
 {
+#ifndef __NetBSD__
 	uint32_t __iomem *virt;
+#endif
 	int rem = ring->size - ring->tail;
 
 	if (ring->space < rem) {
@@ -1584,10 +1651,16 @@ static int intel_wrap_ring_buffer(struct intel_ring_buffer *ring)
 			return ret;
 	}
 
-	virt = ring->virtual_start + ring->tail;
+#ifdef __NetBSD__
+	bus_space_set_region_4(ring->bst, ring->bsh, ring->tail, MI_NOOP,
+	    rem/4);
+#else
+	virt = (void __iomem *)((char __iomem *)ring->virtual_start +
+	    ring->tail);
 	rem /= 4;
 	while (rem--)
 		iowrite32(MI_NOOP, virt++);
+#endif
 
 	ring->tail = 0;
 	ring->space = ring_space(ring);
@@ -2048,17 +2121,34 @@ int intel_render_ring_init_dri(struct drm_device *dev, u64 start, u32 size)
 	if (IS_I830(ring->dev) || IS_845G(ring->dev))
 		ring->effective_size -= 128;
 
+#ifdef __NetBSD__
+	/* XXX errno NetBSD->Linux */
+	ring->bst = dev_priv->dev->pdev->pd_pa.pa_memt;
+	ret = -bus_space_map(ring->bst, start, size,
+	    BUS_SPACE_MAP_PREFETCHABLE, &ring->bsh);
+	if (ret) {
+		DRM_ERROR("Failed to map ringbuffer: %d\n", ret);
+		return ret;
+	}
+#else
 	ring->virtual_start = ioremap_wc(start, size);
 	if (ring->virtual_start == NULL) {
 		DRM_ERROR("can not ioremap virtual address for"
 			  " ring buffer\n");
 		return -ENOMEM;
 	}
+#endif
 
 	if (!I915_NEED_GFX_HWS(dev)) {
 		ret = init_phys_status_page(ring);
-		if (ret)
+		if (ret) {
+#ifdef __NetBSD__
+			bus_space_unmap(ring->bst, ring->bsh, ring->size);
+#else
+			iounmap(ring->virtual_start);
+#endif
 			return ret;
+		}
 	}
 
 	return 0;

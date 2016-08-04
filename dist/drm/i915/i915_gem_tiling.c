@@ -295,12 +295,14 @@ i915_gem_set_tiling(struct drm_device *dev, void *data,
 {
 	struct drm_i915_gem_set_tiling *args = data;
 	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_gem_object *gobj;
 	struct drm_i915_gem_object *obj;
 	int ret = 0;
 
-	obj = to_intel_bo(drm_gem_object_lookup(dev, file, args->handle));
-	if (&obj->base == NULL)
+	gobj = drm_gem_object_lookup(dev, file, args->handle);
+	if (gobj == NULL)
 		return -ENOENT;
+	obj = to_intel_bo(gobj);
 
 	if (!i915_tiling_ok(dev,
 			    args->stride, obj->base.size, args->tiling_mode)) {
@@ -416,11 +418,13 @@ i915_gem_get_tiling(struct drm_device *dev, void *data,
 {
 	struct drm_i915_gem_get_tiling *args = data;
 	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_gem_object *gobj;
 	struct drm_i915_gem_object *obj;
 
-	obj = to_intel_bo(drm_gem_object_lookup(dev, file, args->handle));
-	if (&obj->base == NULL)
+	gobj = drm_gem_object_lookup(dev, file, args->handle);
+	if (gobj == NULL)
 		return -ENOENT;
+	obj = to_intel_bo(gobj);
 
 	mutex_lock(&dev->struct_mutex);
 
@@ -477,12 +481,29 @@ i915_gem_swizzle_page(struct page *page)
 void
 i915_gem_object_do_bit_17_swizzle(struct drm_i915_gem_object *obj)
 {
+#ifdef __NetBSD__
+	struct vm_page *page;
+#else
 	struct sg_page_iter sg_iter;
+#endif
 	int i;
 
 	if (obj->bit_17 == NULL)
 		return;
 
+#ifdef __NetBSD__
+	i = 0;
+	TAILQ_FOREACH(page, &obj->igo_pageq, pageq.queue) {
+		unsigned char new_bit_17 = VM_PAGE_TO_PHYS(page) >> 17;
+		if ((new_bit_17 & 0x1) !=
+		    (test_bit(i, obj->bit_17) != 0)) {
+			i915_gem_swizzle_page(container_of(page, struct page,
+				p_vmp));
+			page->flags &= ~PG_CLEAN;
+		}
+		i += 1;
+	}
+#else
 	i = 0;
 	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, 0) {
 		struct page *page = sg_page_iter_page(&sg_iter);
@@ -494,12 +515,17 @@ i915_gem_object_do_bit_17_swizzle(struct drm_i915_gem_object *obj)
 		}
 		i++;
 	}
+#endif
 }
 
 void
 i915_gem_object_save_bit_17_swizzle(struct drm_i915_gem_object *obj)
 {
+#ifdef __NetBSD__
+	struct vm_page *page;
+#else
 	struct sg_page_iter sg_iter;
+#endif
 	int page_count = obj->base.size >> PAGE_SHIFT;
 	int i;
 
@@ -514,6 +540,15 @@ i915_gem_object_save_bit_17_swizzle(struct drm_i915_gem_object *obj)
 	}
 
 	i = 0;
+#ifdef __NetBSD__
+	TAILQ_FOREACH(page, &obj->igo_pageq, pageq.queue) {
+		if (ISSET(VM_PAGE_TO_PHYS(page), __BIT(17)))
+			__set_bit(i, obj->bit_17);
+		else
+			__clear_bit(i, obj->bit_17);
+		i += 1;
+	}
+#else
 	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, 0) {
 		if (page_to_phys(sg_page_iter_page(&sg_iter)) & (1 << 17))
 			__set_bit(i, obj->bit_17);
@@ -521,4 +556,5 @@ i915_gem_object_save_bit_17_swizzle(struct drm_i915_gem_object *obj)
 			__clear_bit(i, obj->bit_17);
 		i++;
 	}
+#endif
 }

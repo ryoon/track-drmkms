@@ -12,7 +12,13 @@ struct nouveau_bar {
 
 	int (*alloc)(struct nouveau_bar *, struct nouveau_object *,
 		     struct nouveau_mem *, struct nouveau_object **);
+#ifdef __NetBSD__
+	bus_space_tag_t iomemt;
+	bus_space_handle_t iomemh;
+	bus_size_t iomemsz;
+#else
 	void __iomem *iomem;
+#endif
 
 	int (*kmap)(struct nouveau_bar *, struct nouveau_mem *,
 		    u32 flags, struct nouveau_vma *);

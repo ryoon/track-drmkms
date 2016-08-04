@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_timer_gk20a.c,v 1.1.1.1 2014/08/06 12:36:32 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_timer_gk20a.c,v 1.1.1.1 2014/08/06 12:36:32 riastradh Exp $");
 
 #include "nv04.h"
 

@@ -1,3 +1,8 @@
+/*	$NetBSD: nouveau_subdev_pwr_memx.c,v 1.1.1.1 2014/08/06 12:36:31 riastradh Exp $	*/
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_pwr_memx.c,v 1.1.1.1 2014/08/06 12:36:31 riastradh Exp $");
+
 #ifndef __NVKM_PWR_MEMX_H__
 #define __NVKM_PWR_MEMX_H__
 

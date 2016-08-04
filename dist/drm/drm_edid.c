@@ -32,6 +32,13 @@
 #include <linux/hdmi.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/export.h>
+#include <linux/printk.h>
+#include <linux/device.h>
+#include <linux/string.h>
+#include <linux/errno.h>
+#include <asm/byteorder.h>
 #include <drm/drmP.h>
 #include <drm/drm_edid.h>
 
@@ -2505,7 +2512,7 @@ add_alternate_cea_modes(struct drm_connector *connector, struct edid *edid)
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_display_mode *mode, *tmp;
-	LIST_HEAD(list);
+	struct list_head list = LIST_HEAD_INIT(list);
 	int modes = 0;
 
 	/* Don't add CEA modes if the CEA extension block is missing */
@@ -2977,6 +2984,9 @@ parse_hdmi_vsdb(struct drm_connector *connector, const u8 *db)
 {
 	u8 len = cea_db_payload_len(db);
 
+	if (len >= 5) {
+		connector->physical_address = (db[4] << 8) | db[5];
+	}
 	if (len >= 6) {
 		connector->eld[5] |= (db[6] >> 7) << 1;  /* Supports_AI */
 		connector->dvi_dual = db[6] & 1;

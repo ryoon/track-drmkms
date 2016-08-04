@@ -36,6 +36,7 @@
 #include <drm/drm_pciids.h>
 #include <linux/console.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/pm_runtime.h>
 #include <linux/vga_switcheroo.h>
 #include "drm_crtc_helper.h"
@@ -105,7 +106,7 @@ int radeon_get_vblank_timestamp_kms(struct drm_device *dev, int crtc,
 void radeon_driver_irq_preinstall_kms(struct drm_device *dev);
 int radeon_driver_irq_postinstall_kms(struct drm_device *dev);
 void radeon_driver_irq_uninstall_kms(struct drm_device *dev);
-irqreturn_t radeon_driver_irq_handler_kms(int irq, void *arg);
+irqreturn_t radeon_driver_irq_handler_kms(DRM_IRQ_ARGS);
 void radeon_gem_object_free(struct drm_gem_object *obj);
 int radeon_gem_object_open(struct drm_gem_object *obj,
 				struct drm_file *file_priv);
@@ -118,7 +119,12 @@ extern int radeon_get_crtc_scanoutpos(struct drm_device *dev, int crtc,
 extern bool radeon_is_px(struct drm_device *dev);
 extern const struct drm_ioctl_desc radeon_ioctls_kms[];
 extern int radeon_max_kms_ioctl;
+#ifdef __NetBSD__
+int radeon_mmap_object(struct drm_device *, off_t, size_t, vm_prot_t,
+    struct uvm_object **, voff_t *, struct file *);
+#else
 int radeon_mmap(struct file *filp, struct vm_area_struct *vma);
+#endif
 int radeon_mode_dumb_mmap(struct drm_file *filp,
 			  struct drm_device *dev,
 			  uint32_t handle, uint64_t *offset_p);
@@ -146,8 +152,10 @@ void radeon_debugfs_cleanup(struct drm_minor *minor);
 void radeon_register_atpx_handler(void);
 void radeon_unregister_atpx_handler(void);
 #else
+#ifndef __NetBSD__
 static inline void radeon_register_atpx_handler(void) {}
 static inline void radeon_unregister_atpx_handler(void) {}
+#endif
 #endif
 
 int radeon_no_wb;
@@ -327,6 +335,17 @@ static struct drm_driver driver_old = {
 #endif
 
 static struct drm_driver kms_driver;
+
+#ifdef __NetBSD__
+
+struct drm_driver *const radeon_drm_driver = &kms_driver;
+const struct pci_device_id *const radeon_device_ids = pciidlist;
+const size_t radeon_n_device_ids = __arraycount(pciidlist);
+
+/* XXX Kludge for the non-GEM GEM that radeon uses.  */
+static const struct uvm_pagerops radeon_gem_uvm_ops;
+
+#else
 
 static int radeon_kick_out_firmware_fb(struct pci_dev *pdev)
 {
@@ -513,6 +532,7 @@ static const struct file_operations radeon_driver_kms_fops = {
 	.compat_ioctl = radeon_kms_compat_ioctl,
 #endif
 };
+#endif	/* __NetBSD__ */
 
 static struct drm_driver kms_driver = {
 	.driver_features =
@@ -546,8 +566,15 @@ static struct drm_driver kms_driver = {
 	.dumb_create = radeon_mode_dumb_create,
 	.dumb_map_offset = radeon_mode_dumb_mmap,
 	.dumb_destroy = drm_gem_dumb_destroy,
+#ifdef __NetBSD__
+	.fops = NULL,
+	.mmap_object = &radeon_mmap_object,
+	.gem_uvm_ops = &radeon_gem_uvm_ops,
+#else
 	.fops = &radeon_driver_kms_fops,
+#endif
 
+#ifndef __NetBSD__		/* XXX drm prime */
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_export = drm_gem_prime_export,
@@ -558,6 +585,7 @@ static struct drm_driver kms_driver = {
 	.gem_prime_import_sg_table = radeon_gem_prime_import_sg_table,
 	.gem_prime_vmap = radeon_gem_prime_vmap,
 	.gem_prime_vunmap = radeon_gem_prime_vunmap,
+#endif
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
@@ -566,6 +594,8 @@ static struct drm_driver kms_driver = {
 	.minor = KMS_DRIVER_MINOR,
 	.patchlevel = KMS_DRIVER_PATCHLEVEL,
 };
+
+#ifndef __NetBSD__
 
 static struct drm_driver *driver;
 static struct pci_driver *pdriver;
@@ -627,6 +657,8 @@ static void __exit radeon_exit(void)
 	drm_pci_exit(driver, pdriver);
 	radeon_unregister_atpx_handler();
 }
+
+#endif
 
 module_init(radeon_init);
 module_exit(radeon_exit);

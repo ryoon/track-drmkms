@@ -29,10 +29,14 @@
  *      Dave Airlie <airlied@linux.ie>
  *      Jesse Barnes <jesse.barnes@intel.com>
  */
+#include <linux/err.h>
+#include <linux/spinlock.h>
 #include <linux/ctype.h>
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/export.h>
+#include <linux/errno.h>
+#include <asm/bug.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
@@ -377,6 +381,7 @@ int drm_mode_object_get(struct drm_device *dev,
 {
 	int ret;
 
+	idr_preload(GFP_KERNEL);
 	mutex_lock(&dev->mode_config.idr_mutex);
 	ret = idr_alloc(&dev->mode_config.crtc_idr, obj, 1, 0, GFP_KERNEL);
 	if (ret >= 0) {
@@ -388,6 +393,7 @@ int drm_mode_object_get(struct drm_device *dev,
 		obj->type = obj_type;
 	}
 	mutex_unlock(&dev->mode_config.idr_mutex);
+	idr_preload_end();
 
 	return ret < 0 ? ret : 0;
 }
@@ -665,7 +671,7 @@ void drm_framebuffer_remove(struct drm_framebuffer *fb)
 	 * in-use fb with fb-id == 0. Userspace is allowed to shoot its own foot
 	 * in this manner.
 	 */
-	if (atomic_read(&fb->refcount.refcount) > 1) {
+	if (!kref_exclusive_p(&fb->refcount)) {
 		drm_modeset_lock_all(dev);
 		/* remove from any CRTC */
 		list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
@@ -717,7 +723,11 @@ int drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *crtc,
 	crtc->invert_dimensions = false;
 
 	drm_modeset_lock_all(dev);
+#ifdef __NetBSD__
+	linux_mutex_init(&crtc->mutex);
+#else
 	mutex_init(&crtc->mutex);
+#endif
 	mutex_lock_nest_lock(&crtc->mutex, &dev->mode_config.mutex);
 
 	ret = drm_mode_object_get(dev, &crtc->base, DRM_MODE_OBJECT_CRTC);
@@ -758,6 +768,10 @@ void drm_crtc_cleanup(struct drm_crtc *crtc)
 	drm_mode_object_put(dev, &crtc->base);
 	list_del(&crtc->head);
 	dev->mode_config.num_crtc--;
+
+#ifdef __NetBSD__
+	linux_mutex_destroy(&crtc->mutex);
+#endif
 }
 EXPORT_SYMBOL(drm_crtc_cleanup);
 
@@ -896,11 +910,13 @@ EXPORT_SYMBOL(drm_connector_cleanup);
  */
 void drm_connector_unplug_all(struct drm_device *dev)
 {
+#ifndef __NetBSD__
 	struct drm_connector *connector;
 
 	/* taking the mode config mutex ends up in a clash with sysfs */
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head)
 		drm_sysfs_connector_remove(connector);
+#endif
 
 }
 EXPORT_SYMBOL(drm_connector_unplug_all);
@@ -1239,7 +1255,7 @@ EXPORT_SYMBOL(drm_mode_create_dvi_i_properties);
  * this routine.
  */
 int drm_mode_create_tv_properties(struct drm_device *dev, int num_modes,
-				  char *modes[])
+				  const char *modes[])
 {
 	struct drm_property *tv_selector;
 	struct drm_property *tv_subconnector;
@@ -2622,7 +2638,8 @@ int drm_mode_addfb(struct drm_device *dev,
 		   void *data, struct drm_file *file_priv)
 {
 	struct drm_mode_fb_cmd *or = data;
-	struct drm_mode_fb_cmd2 r = {};
+	static const struct drm_mode_fb_cmd2 zero_fbcmd;
+	struct drm_mode_fb_cmd2 r = zero_fbcmd;
 	struct drm_mode_config *config = &dev->mode_config;
 	struct drm_framebuffer *fb;
 	int ret = 0;
@@ -2931,7 +2948,12 @@ int drm_mode_getfb(struct drm_device *dev,
 	r->bpp = fb->bits_per_pixel;
 	r->pitch = fb->pitches[0];
 	if (fb->funcs->create_handle) {
-		if (file_priv->is_master || capable(CAP_SYS_ADMIN) ||
+		if (file_priv->is_master ||
+#ifdef __NetBSD__
+		    DRM_SUSER() ||
+#else
+		    capable(CAP_SYS_ADMIN) ||
+#endif
 		    drm_is_control_client(file_priv)) {
 			ret = fb->funcs->create_handle(fb, file_priv,
 						       &r->handle);
@@ -4022,13 +4044,13 @@ int drm_mode_gamma_set_ioctl(struct drm_device *dev,
 		goto out;
 	}
 
-	g_base = r_base + size;
+	g_base = (char *)r_base + size;
 	if (copy_from_user(g_base, (void __user *)(unsigned long)crtc_lut->green, size)) {
 		ret = -EFAULT;
 		goto out;
 	}
 
-	b_base = g_base + size;
+	b_base = (char *)g_base + size;
 	if (copy_from_user(b_base, (void __user *)(unsigned long)crtc_lut->blue, size)) {
 		ret = -EFAULT;
 		goto out;
@@ -4091,13 +4113,13 @@ int drm_mode_gamma_get_ioctl(struct drm_device *dev,
 		goto out;
 	}
 
-	g_base = r_base + size;
+	g_base = (char *)r_base + size;
 	if (copy_to_user((void __user *)(unsigned long)crtc_lut->green, g_base, size)) {
 		ret = -EFAULT;
 		goto out;
 	}
 
-	b_base = g_base + size;
+	b_base = (char *)g_base + size;
 	if (copy_to_user((void __user *)(unsigned long)crtc_lut->blue, b_base, size)) {
 		ret = -EFAULT;
 		goto out;
@@ -4596,9 +4618,15 @@ EXPORT_SYMBOL(drm_format_vert_chroma_subsampling);
  */
 void drm_mode_config_init(struct drm_device *dev)
 {
+#ifdef __NetBSD__
+	linux_mutex_init(&dev->mode_config.mutex);
+	linux_mutex_init(&dev->mode_config.idr_mutex);
+	linux_mutex_init(&dev->mode_config.fb_lock);
+#else
 	mutex_init(&dev->mode_config.mutex);
 	mutex_init(&dev->mode_config.idr_mutex);
 	mutex_init(&dev->mode_config.fb_lock);
+#endif
 	INIT_LIST_HEAD(&dev->mode_config.fb_list);
 	INIT_LIST_HEAD(&dev->mode_config.crtc_list);
 	INIT_LIST_HEAD(&dev->mode_config.connector_list);
@@ -4696,5 +4724,11 @@ void drm_mode_config_cleanup(struct drm_device *dev)
 	}
 
 	idr_destroy(&dev->mode_config.crtc_idr);
+
+#ifdef __NetBSD__
+	linux_mutex_init(&dev->mode_config.fb_lock);
+	linux_mutex_init(&dev->mode_config.idr_mutex);
+	linux_mutex_init(&dev->mode_config.mutex);
+#endif
 }
 EXPORT_SYMBOL(drm_mode_config_cleanup);

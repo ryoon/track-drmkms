@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_clock_nv50.c,v 1.3 2015/03/12 15:09:04 christos Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_clock_nv50.c,v 1.3 2015/03/12 15:09:04 christos Exp $");
 
 #include <subdev/bios.h>
 #include <subdev/bios/pll.h>
@@ -112,6 +117,9 @@ read_pll_src(struct nv50_clock_priv *priv, u32 base)
 		break;
 	default:
 		BUG_ON(1);
+		M = 0;		/* XXX GCC is stupid */
+		N = 0;		/* XXX GCC is stupid */
+		P = 0;		/* XXX GCC is stupid */
 	}
 
 	if (M)

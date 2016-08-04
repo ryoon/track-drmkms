@@ -34,8 +34,10 @@ void radeon_gem_object_free(struct drm_gem_object *gobj)
 	struct radeon_bo *robj = gem_to_radeon_bo(gobj);
 
 	if (robj) {
+#ifndef __NetBSD__		/* XXX drm prime */
 		if (robj->gem_base.import_attach)
 			drm_prime_gem_destroy(&robj->gem_base, robj->tbo.sg);
+#endif
 		radeon_bo_unref(&robj);
 	}
 }
@@ -77,7 +79,9 @@ retry:
 		return r;
 	}
 	*obj = &robj->gem_base;
+#ifndef __NetBSD__
 	robj->pid = task_pid_nr(current);
+#endif
 
 	mutex_lock(&rdev->gem.mutex);
 	list_add_tail(&robj->list, &rdev->gem.objects);
@@ -442,7 +446,7 @@ int radeon_gem_va_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (args->offset < RADEON_VA_RESERVED_SIZE) {
-		dev_err(&dev->pdev->dev,
+		dev_err(dev->dev,
 			"offset 0x%lX is in reserved area 0x%X\n",
 			(unsigned long)args->offset,
 			RADEON_VA_RESERVED_SIZE);
@@ -456,13 +460,13 @@ int radeon_gem_va_ioctl(struct drm_device *dev, void *data,
 	 */
 	invalid_flags = RADEON_VM_PAGE_VALID | RADEON_VM_PAGE_SYSTEM;
 	if ((args->flags & invalid_flags)) {
-		dev_err(&dev->pdev->dev, "invalid flags 0x%08X vs 0x%08X\n",
+		dev_err(dev->dev, "invalid flags 0x%08X vs 0x%08X\n",
 			args->flags, invalid_flags);
 		args->operation = RADEON_VA_RESULT_ERROR;
 		return -EINVAL;
 	}
 	if (!(args->flags & RADEON_VM_PAGE_SNOOPED)) {
-		dev_err(&dev->pdev->dev, "only supported snooped mapping for now\n");
+		dev_err(dev->dev, "only supported snooped mapping for now\n");
 		args->operation = RADEON_VA_RESULT_ERROR;
 		return -EINVAL;
 	}
@@ -472,7 +476,7 @@ int radeon_gem_va_ioctl(struct drm_device *dev, void *data,
 	case RADEON_VA_UNMAP:
 		break;
 	default:
-		dev_err(&dev->pdev->dev, "unsupported operation %d\n",
+		dev_err(dev->dev, "unsupported operation %d\n",
 			args->operation);
 		args->operation = RADEON_VA_RESULT_ERROR;
 		return -EINVAL;
@@ -569,7 +573,11 @@ int radeon_mode_dumb_create(struct drm_file *file_priv,
 
 	args->pitch = radeon_align_pitch(rdev, args->width, args->bpp, 0) * ((args->bpp + 1) / 8);
 	args->size = args->pitch * args->height;
+#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
+	args->size = round_up(args->size, PAGE_SIZE);
+#else
 	args->size = ALIGN(args->size, PAGE_SIZE);
+#endif
 
 	r = radeon_gem_object_create(rdev, args->size, 0,
 				     RADEON_GEM_DOMAIN_VRAM,

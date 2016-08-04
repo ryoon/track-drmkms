@@ -85,6 +85,7 @@
  *
  */
 
+#include <linux/err.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
@@ -251,8 +252,10 @@ __create_hw_context(struct drm_device *dev,
 
 	/* Default context will never have a file_priv */
 	if (file_priv != NULL) {
+		idr_preload(GFP_KERNEL);
 		ret = idr_alloc(&file_priv->context_idr, ctx,
 				DEFAULT_CONTEXT_ID, 0, GFP_KERNEL);
+		idr_preload_end();
 		if (ret < 0)
 			goto err_out;
 	} else
@@ -453,7 +456,8 @@ void i915_gem_context_fini(struct drm_device *dev)
 		ring->last_context = NULL;
 	}
 
-	i915_gem_object_ggtt_unpin(dctx->obj);
+	if (dctx->obj)
+		i915_gem_object_ggtt_unpin(dctx->obj);
 	i915_gem_context_unreference(dctx);
 }
 

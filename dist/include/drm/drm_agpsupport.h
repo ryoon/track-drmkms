@@ -10,9 +10,15 @@
 
 #if __OS_HAS_AGP
 
+#ifdef __NetBSD__
+static inline void drm_free_agp(struct agp_bridge_data *, struct agp_memory *, int);
+static inline int drm_bind_agp(struct agp_bridge_data *, struct agp_memory *, unsigned);
+static inline int drm_unbind_agp(struct agp_bridge_data *, struct agp_memory *);
+#else
 void drm_free_agp(struct agp_memory * handle, int pages);
 int drm_bind_agp(struct agp_memory * handle, unsigned int start);
 int drm_unbind_agp(struct agp_memory * handle);
+#endif
 struct agp_memory *drm_agp_bind_pages(struct drm_device *dev,
 				struct page **pages,
 				unsigned long num_pages,
@@ -47,6 +53,8 @@ int drm_agp_bind_ioctl(struct drm_device *dev, void *data,
 		       struct drm_file *file_priv);
 #else /* __OS_HAS_AGP */
 
+#if !defined(__NetBSD__)
+
 static inline void drm_free_agp(struct agp_memory * handle, int pages)
 {
 }
@@ -60,6 +68,8 @@ static inline int drm_unbind_agp(struct agp_memory * handle)
 {
 	return -ENODEV;
 }
+
+#endif
 
 static inline struct agp_memory *drm_agp_bind_pages(struct drm_device *dev,
 					      struct page **pages,

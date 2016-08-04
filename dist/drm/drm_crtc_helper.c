@@ -31,13 +31,18 @@
 
 #include <linux/kernel.h>
 #include <linux/export.h>
+#include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <asm/param.h>
+#include <asm/bug.h>
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_crtc_helper.h>
+#ifndef __NetBSD__
 #include <drm/drm_fb_helper.h>
+#endif
 #include <drm/drm_edid.h>
 
 MODULE_AUTHOR("David Airlie, Jesse Barnes");

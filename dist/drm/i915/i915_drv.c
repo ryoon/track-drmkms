@@ -28,6 +28,8 @@
  */
 
 #include <linux/device.h>
+#include <linux/moduleparam.h>
+#include <linux/time.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
@@ -39,6 +41,11 @@
 #include <drm/drm_crtc_helper.h>
 
 static struct drm_driver driver;
+
+#ifdef __NetBSD__
+/* XXX Kludge to expose this to NetBSD driver attachment goop.  */
+struct drm_driver *const i915_drm_driver = &driver;
+#endif
 
 #define GEN_DEFAULT_PIPEOFFSETS \
 	.pipe_offsets = { PIPE_A_OFFSET, PIPE_B_OFFSET, \
@@ -316,11 +323,17 @@ static const struct intel_device_info intel_broadwell_m_info = {
 
 static const struct pci_device_id pciidlist[] = {		/* aka */
 	INTEL_PCI_IDS,
-	{0, 0, 0}
+	{0, 0, 0, 0, 0, 0, 0}
 };
 
 #if defined(CONFIG_DRM_I915_KMS)
 MODULE_DEVICE_TABLE(pci, pciidlist);
+#endif
+
+#ifdef __NetBSD__
+/* XXX Kludge to expose this to NetBSD driver attachment goop.  */
+const struct pci_device_id *const i915_device_ids = pciidlist;
+const size_t i915_n_device_ids = __arraycount(pciidlist);
 #endif
 
 void intel_detect_pch(struct drm_device *dev)
@@ -414,7 +427,7 @@ bool i915_semaphore_is_enabled(struct drm_device *dev)
 	return true;
 }
 
-static int i915_drm_freeze(struct drm_device *dev)
+int i915_drm_freeze(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct drm_crtc *crtc;
@@ -432,7 +445,9 @@ static int i915_drm_freeze(struct drm_device *dev)
 
 	drm_kms_helper_poll_disable(dev);
 
+#ifndef __NetBSD__		/* pmf handles this for us.  */
 	pci_save_state(dev->pdev);
+#endif
 
 	/* If KMS is active, we do the leavevt stuff here */
 	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
@@ -440,8 +455,13 @@ static int i915_drm_freeze(struct drm_device *dev)
 
 		error = i915_gem_suspend(dev);
 		if (error) {
+#ifdef __NetBSD__
+			dev_err(pci_dev_dev(dev->pdev),
+			    "GEM idle failed, resume might fail\n");
+#else
 			dev_err(&dev->pdev->dev,
 				"GEM idle failed, resume might fail\n");
+#endif
 			return error;
 		}
 
@@ -468,9 +488,11 @@ static int i915_drm_freeze(struct drm_device *dev)
 	intel_opregion_fini(dev);
 	intel_uncore_fini(dev);
 
+#ifndef __NetBSD__		/* XXX fb */
 	console_lock();
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED);
 	console_unlock();
+#endif
 
 	dev_priv->suspend_count++;
 
@@ -498,17 +520,20 @@ int i915_suspend(struct drm_device *dev, pm_message_t state)
 	if (error)
 		return error;
 
+#ifndef __NetBSD__		/* pmf handles this for us.  */
 	if (state.event == PM_EVENT_SUSPEND) {
 		/* Shut down the device */
 		pci_disable_device(dev->pdev);
 		pci_set_power_state(dev->pdev, PCI_D3hot);
 	}
+#endif
 
 	return 0;
 }
 
 void intel_console_resume(struct work_struct *work)
 {
+#ifndef __NetBSD__		/* XXX fb */
 	struct drm_i915_private *dev_priv =
 		container_of(work, struct drm_i915_private,
 			     console_resume_work);
@@ -517,6 +542,7 @@ void intel_console_resume(struct work_struct *work)
 	console_lock();
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_RUNNING);
 	console_unlock();
+#endif
 }
 
 static void intel_resume_hotplug(struct drm_device *dev)
@@ -537,7 +563,7 @@ static void intel_resume_hotplug(struct drm_device *dev)
 	drm_helper_hpd_irq_event(dev);
 }
 
-static int i915_drm_thaw_early(struct drm_device *dev)
+int i915_drm_thaw_early(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
@@ -596,6 +622,7 @@ static int __i915_drm_thaw(struct drm_device *dev, bool restore_gtt_mappings)
 
 	intel_opregion_init(dev);
 
+#ifndef __NetBSD__		/* XXX fb */
 	/*
 	 * The console lock can be pretty contented on resume due
 	 * to all the printk activity.  Try to keep it out of the hot
@@ -607,6 +634,7 @@ static int __i915_drm_thaw(struct drm_device *dev, bool restore_gtt_mappings)
 	} else {
 		schedule_work(&dev_priv->console_resume_work);
 	}
+#endif
 
 	mutex_lock(&dev_priv->modeset_restore_lock);
 	dev_priv->modeset_restore = MODESET_DONE;
@@ -616,7 +644,7 @@ static int __i915_drm_thaw(struct drm_device *dev, bool restore_gtt_mappings)
 	return error;
 }
 
-static int i915_drm_thaw(struct drm_device *dev)
+int i915_drm_thaw(struct drm_device *dev)
 {
 	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		i915_check_and_clear_faults(dev);
@@ -629,6 +657,7 @@ static int i915_resume_early(struct drm_device *dev)
 	if (dev->switch_power_state == DRM_SWITCH_POWER_OFF)
 		return 0;
 
+#ifndef __NetBSD__		/* pmf handles this for us.  */
 	/*
 	 * We have a resume ordering issue with the snd-hda driver also
 	 * requiring our device to be power up. Due to the lack of a
@@ -640,7 +669,9 @@ static int i915_resume_early(struct drm_device *dev)
 	 */
 	if (pci_enable_device(dev->pdev))
 		return -EIO;
+#endif
 
+	/* XXX pmf probably handles this for us too.  */
 	pci_set_master(dev->pdev);
 
 	return i915_drm_thaw_early(dev);
@@ -766,6 +797,16 @@ int i915_reset(struct drm_device *dev)
 
 	return 0;
 }
+
+#ifdef __NetBSD__
+
+static const struct uvm_pagerops i915_gem_uvm_ops = {
+	.pgo_reference = drm_gem_pager_reference,
+	.pgo_detach = drm_gem_pager_detach,
+	.pgo_fault = i915_gem_fault,
+};
+
+#else
 
 static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
@@ -978,6 +1019,8 @@ static const struct file_operations i915_driver_fops = {
 	.llseek = noop_llseek,
 };
 
+#endif	/* defined(__NetBSD__) */
+
 static struct drm_driver driver = {
 	/* Don't use MTRRs here; the Xserver or userspace app should
 	 * deal with them for Intel hardware.
@@ -1005,18 +1048,30 @@ static struct drm_driver driver = {
 	.debugfs_cleanup = i915_debugfs_cleanup,
 #endif
 	.gem_free_object = i915_gem_free_object,
+#ifdef __NetBSD__
+	/* XXX Not clear the `or legacy' part is important here.  */
+	.mmap_object = &drm_gem_or_legacy_mmap_object,
+	.gem_uvm_ops = &i915_gem_uvm_ops,
+#else
 	.gem_vm_ops = &i915_gem_vm_ops,
+#endif
 
+#ifndef __NetBSD__		/* XXX drm prime */
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_export = i915_gem_prime_export,
 	.gem_prime_import = i915_gem_prime_import,
+#endif
 
 	.dumb_create = i915_gem_dumb_create,
 	.dumb_map_offset = i915_gem_mmap_gtt,
 	.dumb_destroy = drm_gem_dumb_destroy,
 	.ioctls = i915_ioctls,
+#ifdef __NetBSD__
+	.fops = NULL,
+#else
 	.fops = &i915_driver_fops,
+#endif
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
@@ -1025,6 +1080,7 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
+#ifndef __NetBSD__
 static struct pci_driver i915_pci_driver = {
 	.name = DRIVER_NAME,
 	.id_table = pciidlist,
@@ -1032,7 +1088,9 @@ static struct pci_driver i915_pci_driver = {
 	.remove = i915_pci_remove,
 	.driver.pm = &i915_pm_ops,
 };
+#endif
 
+#ifndef __NetBSD__
 static int __init i915_init(void)
 {
 	driver.num_ioctls = i915_max_ioctl;
@@ -1081,6 +1139,7 @@ static void __exit i915_exit(void)
 
 module_init(i915_init);
 module_exit(i915_exit);
+#endif
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

@@ -31,6 +31,9 @@
 #include <linux/idr.h>
 #include <linux/fb.h>
 #include <linux/hdmi.h>
+#include <linux/kref.h>
+#include <linux/mutex.h>
+#include <linux/workqueue.h>
 #include <drm/drm_mode.h>
 #include <drm/drm_fourcc.h>
 
@@ -461,6 +464,7 @@ struct drm_encoder {
  * @force: a %DRM_FORCE_<foo> state for forced mode sets
  * @encoder_ids: valid encoders for this connector
  * @encoder: encoder driving this connector, if any
+ * @physical_address: HDMI physical address
  * @eld: EDID-like data, if present
  * @dvi_dual: dual link DVI, if found
  * @max_tmds_clock: max clock rate, if found
@@ -513,6 +517,7 @@ struct drm_connector {
 	struct drm_encoder *encoder; /* currently active encoder */
 
 	/* EDID bits */
+	uint16_t physical_address;
 	uint8_t eld[MAX_ELD_BYTES];
 	bool dvi_dual;
 	int max_tmds_clock;	/* in MHz */
@@ -820,7 +825,7 @@ struct drm_mode_config {
 
 struct drm_prop_enum_list {
 	int type;
-	char *name;
+	const char *name;
 };
 
 extern void drm_modeset_lock_all(struct drm_device *dev);
@@ -964,7 +969,7 @@ extern int drm_property_add_enum(struct drm_property *property, int index,
 				 uint64_t value, const char *name);
 extern int drm_mode_create_dvi_i_properties(struct drm_device *dev);
 extern int drm_mode_create_tv_properties(struct drm_device *dev, int num_formats,
-				     char *formats[]);
+				     const char *formats[]);
 extern int drm_mode_create_scaling_mode_property(struct drm_device *dev);
 extern int drm_mode_create_dirty_info_property(struct drm_device *dev);
 extern const char *drm_get_encoder_name(const struct drm_encoder *encoder);

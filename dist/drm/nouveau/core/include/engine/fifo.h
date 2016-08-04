@@ -9,7 +9,13 @@ struct nouveau_fifo_chan {
 	struct nouveau_namedb base;
 	struct nouveau_dmaobj *pushdma;
 	struct nouveau_gpuobj *pushgpu;
+#ifdef __NetBSD__
+	bus_space_tag_t bst;
+	bus_space_handle_t bsh;
+	bool mapped;
+#else
 	void __iomem *user;
+#endif
 	u32 size;
 	u16 chid;
 	atomic_t refcnt; /* NV04_NVSW_SET_REF */
@@ -109,6 +115,7 @@ extern struct nouveau_oclass *nv50_fifo_oclass;
 extern struct nouveau_oclass *nv84_fifo_oclass;
 extern struct nouveau_oclass *nvc0_fifo_oclass;
 extern struct nouveau_oclass *nve0_fifo_oclass;
+extern struct nouveau_oclass *gk20a_fifo_oclass;
 extern struct nouveau_oclass *nv108_fifo_oclass;
 
 void nv04_fifo_intr(struct nouveau_subdev *);

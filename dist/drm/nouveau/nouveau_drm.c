@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_drm.c,v 1.8 2016/02/11 04:51:44 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_drm.c,v 1.8 2016/02/11 04:51:44 riastradh Exp $");
 
 #include <linux/console.h>
 #include <linux/module.h>
@@ -57,13 +62,14 @@
 #include "nouveau_fbcon.h"
 #include "nouveau_fence.h"
 #include "nouveau_debugfs.h"
+#include "nouveau_ttm.h"
 
 MODULE_PARM_DESC(config, "option string to pass to driver core");
-static char *nouveau_config;
+char *nouveau_config;
 module_param_named(config, nouveau_config, charp, 0400);
 
 MODULE_PARM_DESC(debug, "debug string to pass to driver core");
-static char *nouveau_debug;
+char *nouveau_debug;
 module_param_named(debug, nouveau_debug, charp, 0400);
 
 MODULE_PARM_DESC(noaccel, "disable kernel/abi16 acceleration");
@@ -80,12 +86,24 @@ int nouveau_runtime_pm = -1;
 module_param_named(runpm, nouveau_runtime_pm, int, 0400);
 
 static struct drm_driver driver;
+#ifdef __NetBSD__
+struct drm_driver *const nouveau_drm_driver = &driver;
+
+/* XXX Kludge for the non-GEM GEM that nouveau uses.  */
+static const struct uvm_pagerops nouveau_gem_uvm_ops;
+
+#endif
 
 static u64
 nouveau_pci_name(struct pci_dev *pdev)
 {
+#ifdef __NetBSD__
+	u64 name = (u64)device_unit(device_parent(pdev->pd_dev)) << 32;
+	name |= (u64)pdev->pd_pa.pa_bus << 16;
+#else
 	u64 name = (u64)pci_domain_nr(pdev->bus) << 32;
 	name |= pdev->bus->number << 16;
+#endif
 	name |= PCI_SLOT(pdev->devfn) << 8;
 	return name | PCI_FUNC(pdev->devfn);
 }
@@ -123,7 +141,11 @@ nouveau_cli_create(u64 name, const char *sname,
 		return ret;
 	}
 
+#ifdef __NetBSD__
+	linux_mutex_init(&cli->mutex);
+#else
 	mutex_init(&cli->mutex);
+#endif
 	return 0;
 }
 
@@ -131,6 +153,11 @@ static void
 nouveau_cli_destroy(struct nouveau_cli *cli)
 {
 	struct nouveau_object *client = nv_object(cli);
+#ifdef __NetBSD__
+	linux_mutex_destroy(&cli->mutex);
+#else
+	mutex_destroy(&cli->mutex);
+#endif
 	nouveau_vm_ref(NULL, &cli->base.vm, NULL);
 	nouveau_client_fini(&cli->base, false);
 	atomic_set(&client->refcount, 1);
@@ -262,6 +289,7 @@ nouveau_accel_init(struct nouveau_drm *drm)
 	nouveau_bo_move_init(drm);
 }
 
+#ifndef __NetBSD__
 static int nouveau_drm_probe(struct pci_dev *pdev,
 			     const struct pci_device_id *pent)
 {
@@ -313,12 +341,14 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 
 	return 0;
 }
+#endif
 
 #define PCI_CLASS_MULTIMEDIA_HD_AUDIO 0x0403
 
 static void
 nouveau_get_hdmi_dev(struct nouveau_drm *drm)
 {
+#ifndef __NetBSD__		/* XXX nouveau hdmi */
 	struct pci_dev *pdev = drm->dev->pdev;
 
 	if (!pdev) {
@@ -342,6 +372,7 @@ nouveau_get_hdmi_dev(struct nouveau_drm *drm)
 		drm->hdmi_device = NULL;
 		return;
 	}
+#endif
 }
 
 static int
@@ -488,12 +519,15 @@ nouveau_drm_unload(struct drm_device *dev)
 	nouveau_agp_fini(drm);
 	nouveau_vga_fini(drm);
 
+#ifndef __NetBSD__		/* XXX nouveau hdmi */
 	if (drm->hdmi_device)
 		pci_dev_put(drm->hdmi_device);
+#endif
 	nouveau_cli_destroy(&drm->client);
 	return 0;
 }
 
+#ifndef __NetBSD__		/* XXX nouveau detach */
 static void
 nouveau_drm_remove(struct pci_dev *pdev)
 {
@@ -508,6 +542,7 @@ nouveau_drm_remove(struct pci_dev *pdev)
 	nouveau_object_ref(NULL, &device);
 	nouveau_object_debug();
 }
+#endif
 
 static int
 nouveau_do_suspend(struct drm_device *dev, bool runtime)
@@ -577,10 +612,16 @@ fail_display:
 	return ret;
 }
 
+#ifdef __NetBSD__
+int nouveau_pmops_suspend(struct drm_device *drm_dev)
+#else
 int nouveau_pmops_suspend(struct device *dev)
+#endif
 {
+#ifndef __NetBSD__
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct drm_device *drm_dev = pci_get_drvdata(pdev);
+#endif
 	int ret;
 
 	if (drm_dev->switch_power_state == DRM_SWITCH_POWER_OFF ||
@@ -594,9 +635,11 @@ int nouveau_pmops_suspend(struct device *dev)
 	if (ret)
 		return ret;
 
+#ifndef __NetBSD__		/* pmf handles this for us.  */
 	pci_save_state(pdev);
 	pci_disable_device(pdev);
 	pci_set_power_state(pdev, PCI_D3hot);
+#endif
 	return 0;
 }
 
@@ -632,22 +675,30 @@ nouveau_do_resume(struct drm_device *dev)
 	return 0;
 }
 
+#ifdef __NetBSD__
+int nouveau_pmops_resume(struct drm_device *drm_dev)
+#else
 int nouveau_pmops_resume(struct device *dev)
+#endif
 {
+#ifndef __NetBSD__
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct drm_device *drm_dev = pci_get_drvdata(pdev);
+#endif
 	int ret;
 
 	if (drm_dev->switch_power_state == DRM_SWITCH_POWER_OFF ||
 	    drm_dev->switch_power_state == DRM_SWITCH_POWER_DYNAMIC_OFF)
 		return 0;
 
+#ifndef __NetBSD__		/* pmf handles this for us */
 	pci_set_power_state(pdev, PCI_D0);
 	pci_restore_state(pdev);
 	ret = pci_enable_device(pdev);
 	if (ret)
 		return ret;
 	pci_set_master(pdev);
+#endif
 
 	ret = nouveau_do_resume(drm_dev);
 	if (ret)
@@ -661,6 +712,7 @@ int nouveau_pmops_resume(struct device *dev)
 	return 0;
 }
 
+#ifndef __NetBSD__		/* XXX nouveau pm */
 static int nouveau_pmops_freeze(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -690,14 +742,18 @@ static int nouveau_pmops_thaw(struct device *dev)
 		nouveau_display_resume(drm_dev);
 	return 0;
 }
-
+#endif	/* XXX nouveau pm */
 
 static int
 nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
 {
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nouveau_cli *cli;
+#ifdef __NetBSD__
+	const char name[] = "user";
+#else
 	char name[32], tmpname[TASK_COMM_LEN];
+#endif
 	int ret;
 
 	/* need to bring up power immediately if opening device */
@@ -705,8 +761,10 @@ nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
 	if (ret < 0 && ret != -EACCES)
 		return ret;
 
+#ifndef __NetBSD__
 	get_task_comm(tmpname, current);
 	snprintf(name, sizeof(name), "%s[%d]", tmpname, pid_nr(fpriv->pid));
+#endif
 
 	ret = nouveau_cli_create(nouveau_name(dev), name, sizeof(*cli),
 			(void **)&cli);
@@ -778,6 +836,7 @@ nouveau_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(NOUVEAU_GEM_INFO, nouveau_gem_ioctl_info, DRM_UNLOCKED|DRM_AUTH|DRM_RENDER_ALLOW),
 };
 
+#ifndef __NetBSD__		/* XXX nouveau pm */
 long nouveau_drm_ioctl(struct file *filp,
 		       unsigned int cmd, unsigned long arg)
 {
@@ -810,6 +869,7 @@ nouveau_driver_fops = {
 #endif
 	.llseek = noop_llseek,
 };
+#endif
 
 static struct drm_driver
 driver = {
@@ -837,8 +897,15 @@ driver = {
 
 	.ioctls = nouveau_ioctls,
 	.num_ioctls = ARRAY_SIZE(nouveau_ioctls),
+#ifdef __NetBSD__
+	.fops = NULL,
+	.mmap_object = &nouveau_ttm_mmap_object,
+	.gem_uvm_ops = &nouveau_gem_uvm_ops,
+#else
 	.fops = &nouveau_driver_fops,
+#endif
 
+#ifndef __NetBSD__		/* XXX drm prime */
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_export = drm_gem_prime_export,
@@ -849,6 +916,7 @@ driver = {
 	.gem_prime_import_sg_table = nouveau_gem_prime_import_sg_table,
 	.gem_prime_vmap = nouveau_gem_prime_vmap,
 	.gem_prime_vunmap = nouveau_gem_prime_vunmap,
+#endif
 
 	.gem_free_object = nouveau_gem_object_del,
 	.gem_open_object = nouveau_gem_object_open,
@@ -870,6 +938,7 @@ driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
+#ifndef __NetBSD__
 static struct pci_device_id
 nouveau_drm_pci_table[] = {
 	{
@@ -884,7 +953,9 @@ nouveau_drm_pci_table[] = {
 	},
 	{}
 };
+#endif
 
+#ifndef __NetBSD__		/* XXX nouveau pm */
 static int nouveau_pmops_runtime_suspend(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -961,6 +1032,7 @@ static int nouveau_pmops_runtime_idle(struct device *dev)
 		return -EBUSY;
 	}
 
+#ifndef __NetBSD__		/* XXX nouveau hdmi */
 	/* if we have a hdmi audio device - make sure it has a driver loaded */
 	if (drm->hdmi_device) {
 		if (!drm->hdmi_device->driver) {
@@ -969,6 +1041,7 @@ static int nouveau_pmops_runtime_idle(struct device *dev)
 			return -EBUSY;
 		}
 	}
+#endif
 
 	list_for_each_entry(crtc, &drm->dev->mode_config.crtc_list, head) {
 		if (crtc->enabled) {
@@ -993,7 +1066,9 @@ static const struct dev_pm_ops nouveau_pm_ops = {
 	.runtime_resume = nouveau_pmops_runtime_resume,
 	.runtime_idle = nouveau_pmops_runtime_idle,
 };
+#endif	/* XXX nouveau pm */
 
+#ifndef __NetBSD__
 static struct pci_driver
 nouveau_drm_pci_driver = {
 	.name = "nouveau",
@@ -1048,6 +1123,7 @@ nouveau_drm_exit(void)
 	drm_pci_exit(&driver, &nouveau_drm_pci_driver);
 	nouveau_unregister_dsm_handler();
 }
+#endif
 
 module_init(nouveau_drm_init);
 module_exit(nouveau_drm_exit);

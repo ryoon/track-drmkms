@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_vp_nv84.c,v 1.1.1.1 2014/08/06 12:36:27 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs, Ilia Mirkin
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_vp_nv84.c,v 1.1.1.1 2014/08/06 12:36:27 riastradh Exp $");
 
 #include <engine/xtensa.h>
 #include <engine/vp.h>

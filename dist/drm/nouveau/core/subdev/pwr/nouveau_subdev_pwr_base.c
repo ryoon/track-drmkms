@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_pwr_base.c,v 1.4 2015/02/25 22:12:00 riastradh Exp $	*/
+
 /*
  * Copyright 2013 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_pwr_base.c,v 1.4 2015/02/25 22:12:00 riastradh Exp $");
 
 #include <subdev/pwr.h>
 #include <subdev/timer.h>
@@ -66,7 +71,15 @@ nouveau_pwr_send(struct nouveau_pwr *ppwr, u32 reply[2],
 
 	/* wait for reply, if requested */
 	if (reply) {
+#ifdef __NetBSD__
+		int ret;
+
+		DRM_WAIT_NOINTR_UNTIL(ret, &ppwr->recv.wait, &subdev->mutex,
+		    (ppwr->recv.process == 0));
+		KASSERT(ret == 0);
+#else
 		wait_event(ppwr->recv.wait, (ppwr->recv.process == 0));
+#endif
 		reply[0] = ppwr->recv.data[0];
 		reply[1] = ppwr->recv.data[1];
 		mutex_unlock(&subdev->mutex);
@@ -80,6 +93,7 @@ nouveau_pwr_recv(struct work_struct *work)
 {
 	struct nouveau_pwr *ppwr =
 		container_of(work, struct nouveau_pwr, recv.work);
+	struct nouveau_subdev *subdev = nv_subdev(ppwr);
 	u32 process, message, data0, data1;
 
 	/* nothing to do if GET == PUT */
@@ -106,14 +120,20 @@ nouveau_pwr_recv(struct work_struct *work)
 
 	/* wake process if it's waiting on a synchronous reply */
 	if (ppwr->recv.process) {
+		mutex_lock(&subdev->mutex);
 		if (process == ppwr->recv.process &&
 		    message == ppwr->recv.message) {
 			ppwr->recv.data[0] = data0;
 			ppwr->recv.data[1] = data1;
 			ppwr->recv.process = 0;
+#ifdef __NetBSD__
+			DRM_WAKEUP_ONE(&ppwr->recv.wait, &subdev->mutex);
+#else
 			wake_up(&ppwr->recv.wait);
+#endif
 			return;
 		}
+		mutex_unlock(&subdev->mutex);
 	}
 
 	/* right now there's no other expected responses from the engine,
@@ -242,6 +262,22 @@ nouveau_pwr_create_(struct nouveau_object *parent,
 		return ret;
 
 	INIT_WORK(&ppwr->recv.work, nouveau_pwr_recv);
+#ifdef __NetBSD__
+	DRM_INIT_WAITQUEUE(&ppwr->recv.wait, "nvppwr");
+#else
 	init_waitqueue_head(&ppwr->recv.wait);
+#endif
 	return 0;
 }
+
+#ifdef __NetBSD__
+void
+_nouveau_pwr_dtor(struct nouveau_object *object)
+{
+	struct nouveau_pwr *ppwr = (void *)object;
+
+	DRM_DESTROY_WAITQUEUE(&ppwr->recv.wait);
+
+	_nouveau_subdev_dtor(object);
+}
+#endif

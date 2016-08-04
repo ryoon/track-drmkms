@@ -33,8 +33,28 @@
 #include "intel_dsi.h"
 #include "intel_dsi_cmd.h"
 
+#ifdef __NetBSD__
+static bool
+intel_dsi_dummy_init(struct intel_dsi_device *dev __unused)
+{
+
+	return false;
+}
+
+static const struct intel_dsi_dev_ops intel_dsi_dummy = {
+	.init = &intel_dsi_dummy_init,
+};
+#endif
+
 /* the sub-encoders aka panel drivers */
 static const struct intel_dsi_device intel_dsi_devices[] = {
+#ifdef __NetBSD__
+	{
+		.panel_id = 0,
+		.name = "dummy",
+		.dev_ops = &intel_dsi_dummy,
+	},
+#endif
 };
 
 static void band_gap_reset(struct drm_i915_private *dev_priv)
@@ -240,12 +260,12 @@ static void intel_dsi_post_disable(struct intel_encoder *encoder)
 }
 
 static bool intel_dsi_get_hw_state(struct intel_encoder *encoder,
-				   enum pipe *pipe)
+				   enum i915_pipe *pipe)
 {
 	struct drm_i915_private *dev_priv = encoder->base.dev->dev_private;
 	enum intel_display_power_domain power_domain;
 	u32 port, func;
-	enum pipe p;
+	enum i915_pipe p;
 
 	DRM_DEBUG_KMS("\n");
 

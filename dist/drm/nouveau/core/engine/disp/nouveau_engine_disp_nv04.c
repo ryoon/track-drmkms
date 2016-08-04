@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_disp_nv04.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -22,10 +24,15 @@
  * Authors: Ben Skeggs
  */
 
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_disp_nv04.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $");
+
 #include "priv.h"
 
 #include <core/event.h>
 #include <core/class.h>
+
+#include <linux/ktime.h>	/* XXX */
 
 struct nv04_disp_priv {
 	struct nouveau_disp base;

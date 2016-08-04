@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_fb_ramnv10.c,v 1.1.1.1 2014/08/06 12:36:30 riastradh Exp $	*/
+
 /*
  * Copyright 2013 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_fb_ramnv10.c,v 1.1.1.1 2014/08/06 12:36:30 riastradh Exp $");
 
 #include "priv.h"
 

@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_therm_fantog.c,v 1.1.1.1 2014/08/06 12:36:32 riastradh Exp $	*/
+
 /*
  * Copyright 2012 The Nouveau community
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Martin Peres
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_therm_fantog.c,v 1.1.1.1 2014/08/06 12:36:32 riastradh Exp $");
 
 #include "priv.h"
 

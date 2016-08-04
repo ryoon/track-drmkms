@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_mxm_mxms.c,v 1.2 2016/04/22 19:40:55 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_mxm_mxms.c,v 1.2 2016/04/22 19:40:55 riastradh Exp $");
 
 #include <subdev/mxm.h>
 #include "mxms.h"
@@ -168,7 +173,7 @@ mxms_foreach(struct nouveau_mxm *mxm, u8 types,
 			}
 		}
 
-		if (types & (1 << type)) {
+		if ((types & (1 << type)) && (exec != NULL)) {
 			if (!exec(mxm, desc, info))
 				return false;
 		}

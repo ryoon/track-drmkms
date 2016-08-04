@@ -25,11 +25,20 @@
  *
  */
 
+#include <linux/bitops.h>
 #include <linux/cpufreq.h>
+#include <linux/export.h>
 #include "i915_drv.h"
 #include "intel_drv.h"
+#ifndef __NetBSD__
 #include "../../../platform/x86/intel_ips.h"
+#endif
 #include <linux/module.h>
+#include <linux/kgdb.h>
+#include <linux/log2.h>
+#include <linux/math64.h>
+#include <linux/time.h>
+#include <asm/param.h>
 #include <linux/vgaarb.h>
 #include <drm/i915_powerwell.h>
 #include <linux/pm_runtime.h>
@@ -2160,7 +2169,7 @@ static void ilk_compute_wm_parameters(struct drm_crtc *crtc,
 {
 	struct drm_device *dev = crtc->dev;
 	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
-	enum pipe pipe = intel_crtc->pipe;
+	enum i915_pipe pipe = intel_crtc->pipe;
 	struct drm_plane *plane;
 
 	p->active = intel_crtc_active(crtc);
@@ -2364,7 +2373,7 @@ static void ilk_compute_wm_results(struct drm_device *dev,
 
 	/* LP0 register values */
 	list_for_each_entry(intel_crtc, &dev->mode_config.crtc_list, base.head) {
-		enum pipe pipe = intel_crtc->pipe;
+		enum i915_pipe pipe = intel_crtc->pipe;
 		const struct intel_wm_level *r =
 			&intel_crtc->wm.active.wm[0];
 
@@ -2421,7 +2430,7 @@ static unsigned int ilk_compute_wm_dirty(struct drm_device *dev,
 					 const struct ilk_wm_values *new)
 {
 	unsigned int dirty = 0;
-	enum pipe pipe;
+	enum i915_pipe pipe;
 	int wm_lp;
 
 	for_each_pipe(pipe) {
@@ -2591,12 +2600,17 @@ static void ilk_update_wm(struct drm_crtc *crtc)
 	struct drm_device *dev = crtc->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct ilk_wm_maximums max;
-	struct ilk_pipe_wm_parameters params = {};
-	struct ilk_wm_values results = {};
+	static const struct ilk_pipe_wm_parameters zero_params;
+	struct ilk_pipe_wm_parameters params = zero_params;
+	static const struct ilk_wm_values zero_values;
+	struct ilk_wm_values results = zero_values;
 	enum intel_ddb_partitioning partitioning;
-	struct intel_pipe_wm pipe_wm = {};
-	struct intel_pipe_wm lp_wm_1_2 = {}, lp_wm_5_6 = {}, *best_lp_wm;
-	struct intel_wm_config config = {};
+	static const struct intel_pipe_wm zero_wm;
+	struct intel_pipe_wm pipe_wm = zero_wm;
+	struct intel_pipe_wm lp_wm_1_2 = zero_wm, lp_wm_5_6 = zero_wm,
+	    *best_lp_wm;
+	static const struct intel_wm_config zero_config;
+	struct intel_wm_config config = zero_config;
 
 	ilk_compute_wm_parameters(crtc, &params, &config);
 
@@ -2662,7 +2676,7 @@ static void ilk_pipe_wm_get_hw_state(struct drm_crtc *crtc)
 	struct ilk_wm_values *hw = &dev_priv->wm.hw;
 	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
 	struct intel_pipe_wm *active = &intel_crtc->wm.active;
-	enum pipe pipe = intel_crtc->pipe;
+	enum i915_pipe pipe = intel_crtc->pipe;
 	static const unsigned int wm0_pipe_reg[] = {
 		[PIPE_A] = WM0_PIPEA_ILK,
 		[PIPE_B] = WM0_PIPEB_ILK,
@@ -2818,7 +2832,11 @@ err_unref:
 /**
  * Lock protecting IPS related data structures
  */
+#ifdef __NetBSD__
+spinlock_t mchdev_lock;
+#else
 DEFINE_SPINLOCK(mchdev_lock);
+#endif
 
 /* Global for IPS driver to get at the current i915 device. Protected by
  * mchdev_lock. */
@@ -3296,7 +3314,7 @@ static void gen8_enable_rps(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_ring_buffer *ring;
-	uint32_t rc6_mask = 0, rp_state_cap;
+	uint32_t rc6_mask = 0;
 	int unused;
 
 	/* 1a: Software RC state - RC0 */
@@ -3309,7 +3327,7 @@ static void gen8_enable_rps(struct drm_device *dev)
 	/* 2a: Disable RC states. */
 	I915_WRITE(GEN6_RC_CONTROL, 0);
 
-	rp_state_cap = I915_READ(GEN6_RP_STATE_CAP);
+	(void)I915_READ(GEN6_RP_STATE_CAP);
 
 	/* 2b: Program RC6 thresholds.*/
 	I915_WRITE(GEN6_RC6_WAKE_RATE_LIMIT, 40 << 16);
@@ -3369,7 +3387,6 @@ static void gen6_enable_rps(struct drm_device *dev)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_ring_buffer *ring;
 	u32 rp_state_cap;
-	u32 gt_perf_status;
 	u32 rc6vids, pcu_mbox = 0, rc6_mask = 0;
 	u32 gtfifodbg;
 	int rc6_mode;
@@ -3394,7 +3411,7 @@ static void gen6_enable_rps(struct drm_device *dev)
 	gen6_gt_force_wake_get(dev_priv, FORCEWAKE_ALL);
 
 	rp_state_cap = I915_READ(GEN6_RP_STATE_CAP);
-	gt_perf_status = I915_READ(GEN6_GT_PERF_STATUS);
+	(void)I915_READ(GEN6_GT_PERF_STATUS);
 
 	/* All of these values are in units of 50MHz */
 	dev_priv->rps.cur_freq		= 0;
@@ -3501,10 +3518,18 @@ void gen6_update_ring_freq(struct drm_device *dev)
 	unsigned int gpu_freq;
 	unsigned int max_ia_freq, min_ring_freq;
 	int scaling_factor = 180;
+#ifndef __NetBSD__
 	struct cpufreq_policy *policy;
+#endif
 
 	WARN_ON(!mutex_is_locked(&dev_priv->rps.hw_lock));
 
+#ifdef __NetBSD__
+	{
+		extern uint64_t tsc_freq; /* x86 TSC frequency in Hz */
+		max_ia_freq = (tsc_freq / 1000);
+	}
+#else
 	policy = cpufreq_cpu_get(0);
 	if (policy) {
 		max_ia_freq = policy->cpuinfo.max_freq;
@@ -3516,6 +3541,7 @@ void gen6_update_ring_freq(struct drm_device *dev)
 		 */
 		max_ia_freq = tsc_khz;
 	}
+#endif
 
 	/* Convert from kHz to MHz */
 	max_ia_freq /= 1000;
@@ -3599,6 +3625,8 @@ static void valleyview_check_pctx(struct drm_i915_private *dev_priv)
 {
 	unsigned long pctx_addr = I915_READ(VLV_PCBR) & ~4095;
 
+	if (WARN_ON(!dev_priv->vlv_pctx))
+		return;
 	WARN_ON(pctx_addr != dev_priv->mm.stolen_base +
 			     dev_priv->vlv_pctx->stolen->start);
 }
@@ -4387,6 +4415,7 @@ EXPORT_SYMBOL_GPL(i915_gpu_turbo_disable);
 static void
 ips_ping_for_i915_load(void)
 {
+#ifndef __NetBSD__		/* XXX IPS GPU turbo limits what?  */
 	void (*link)(void);
 
 	link = symbol_get(ips_link_to_i915_driver);
@@ -4394,6 +4423,7 @@ ips_ping_for_i915_load(void)
 		link();
 		symbol_put(ips_link_to_i915_driver);
 	}
+#endif
 }
 
 void intel_gpu_ips_init(struct drm_i915_private *dev_priv)
@@ -4457,8 +4487,8 @@ static void intel_init_emon(struct drm_device *dev)
 	pxw[15] = 0;
 
 	for (i = 0; i < 4; i++) {
-		u32 val = (pxw[i*4] << 24) | (pxw[(i*4)+1] << 16) |
-			(pxw[(i*4)+2] << 8) | (pxw[(i*4)+3]);
+		u32 val = ((u32)pxw[i*4] << 24) | ((u32)pxw[(i*4)+1] << 16) |
+			((u32)pxw[(i*4)+2] << 8) | ((u32)pxw[(i*4)+3]);
 		I915_WRITE(PXW + (i * 4), val);
 	}
 
@@ -4872,7 +4902,7 @@ static void lpt_suspend_hw(struct drm_device *dev)
 static void gen8_init_clock_gating(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	enum pipe pipe;
+	enum i915_pipe pipe;
 
 	I915_WRITE(WM3_LP_ILK, 0);
 	I915_WRITE(WM2_LP_ILK, 0);
@@ -5361,6 +5391,7 @@ static void hsw_power_well_post_enable(struct drm_i915_private *dev_priv)
 	struct drm_device *dev = dev_priv->dev;
 	unsigned long irqflags;
 
+#ifndef __NetBSD__		/* XXX Haswell VGA what?  */
 	/*
 	 * After we re-enable the power well, if we touch VGA register 0x3d5
 	 * we'll get unclaimed register interrupts. This stops after we write
@@ -5374,6 +5405,7 @@ static void hsw_power_well_post_enable(struct drm_i915_private *dev_priv)
 	vga_get_uninterruptible(dev->pdev, VGA_RSRC_LEGACY_IO);
 	outb(inb(VGA_MSR_READ), VGA_MSR_WRITE);
 	vga_put(dev->pdev, VGA_RSRC_LEGACY_IO);
+#endif
 
 	if (IS_BROADWELL(dev)) {
 		spin_lock_irqsave(&dev_priv->irq_lock, irqflags);
@@ -5392,7 +5424,7 @@ static void hsw_power_well_post_enable(struct drm_i915_private *dev_priv)
 	}
 }
 
-static void reset_vblank_counter(struct drm_device *dev, enum pipe pipe)
+static void reset_vblank_counter(struct drm_device *dev, enum i915_pipe pipe)
 {
 	assert_spin_locked(&dev->vbl_lock);
 
@@ -5402,7 +5434,7 @@ static void reset_vblank_counter(struct drm_device *dev, enum pipe pipe)
 static void hsw_power_well_post_disable(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = dev_priv->dev;
-	enum pipe pipe;
+	enum i915_pipe pipe;
 	unsigned long irqflags;
 
 	/*
@@ -5604,7 +5636,7 @@ static void vlv_display_power_well_disable(struct drm_i915_private *dev_priv,
 					   struct i915_power_well *power_well)
 {
 	struct drm_device *dev = dev_priv->dev;
-	enum pipe pipe;
+	enum i915_pipe pipe;
 
 	WARN_ON_ONCE(power_well->data != PUNIT_POWER_WELL_DISP2D);
 
@@ -5919,7 +5951,11 @@ int intel_power_domains_init(struct drm_i915_private *dev_priv)
 {
 	struct i915_power_domains *power_domains = &dev_priv->power_domains;
 
+#ifdef __NetBSD__
+	linux_mutex_init(&power_domains->lock);
+#else
 	mutex_init(&power_domains->lock);
+#endif
 
 	/*
 	 * The enabling order will be from lower to higher indexed wells,
@@ -5942,7 +5978,14 @@ int intel_power_domains_init(struct drm_i915_private *dev_priv)
 
 void intel_power_domains_remove(struct drm_i915_private *dev_priv)
 {
+	struct i915_power_domains *power_domains = &dev_priv->power_domains;
+
 	hsw_pwr = NULL;
+#ifdef __NetBSD__
+	linux_mutex_destroy(&power_domains->lock);
+#else
+	mutex_destroy(&power_domains->lock);
+#endif
 }
 
 static void intel_power_domains_resume(struct drm_i915_private *dev_priv)
@@ -5977,7 +6020,7 @@ void intel_aux_display_runtime_put(struct drm_i915_private *dev_priv)
 void intel_runtime_pm_get(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = dev_priv->dev;
-	struct device *device = &dev->pdev->dev;
+	struct device *device = dev->dev;
 
 	if (!HAS_RUNTIME_PM(dev))
 		return;
@@ -5989,7 +6032,7 @@ void intel_runtime_pm_get(struct drm_i915_private *dev_priv)
 void intel_runtime_pm_put(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = dev_priv->dev;
-	struct device *device = &dev->pdev->dev;
+	struct device *device = dev->dev;
 
 	if (!HAS_RUNTIME_PM(dev))
 		return;
@@ -6001,7 +6044,7 @@ void intel_runtime_pm_put(struct drm_i915_private *dev_priv)
 void intel_init_runtime_pm(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = dev_priv->dev;
-	struct device *device = &dev->pdev->dev;
+	struct device *device = dev->dev;
 
 	if (!HAS_RUNTIME_PM(dev))
 		return;
@@ -6018,7 +6061,7 @@ void intel_init_runtime_pm(struct drm_i915_private *dev_priv)
 void intel_fini_runtime_pm(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = dev_priv->dev;
-	struct device *device = &dev->pdev->dev;
+	struct device *device = dev->dev;
 
 	if (!HAS_RUNTIME_PM(dev))
 		return;
@@ -6233,7 +6276,11 @@ void intel_pm_setup(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
+#ifdef __NetBSD__
+	linux_mutex_init(&dev_priv->rps.hw_lock);
+#else
 	mutex_init(&dev_priv->rps.hw_lock);
+#endif
 
 	INIT_DELAYED_WORK(&dev_priv->rps.delayed_resume_work,
 			  intel_gen6_powersave_work);

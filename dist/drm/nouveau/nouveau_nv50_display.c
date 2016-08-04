@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_nv50_display.c,v 1.5 2016/02/05 23:46:40 riastradh Exp $	*/
+
 	/*
  * Copyright 2011 Red Hat Inc.
  *
@@ -22,7 +24,11 @@
  * Authors: Ben Skeggs
  */
 
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_nv50_display.c,v 1.5 2016/02/05 23:46:40 riastradh Exp $");
+
 #include <linux/dma-mapping.h>
+#include <linux/err.h>
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
@@ -44,6 +50,25 @@
 #include <subdev/bar.h>
 #include <subdev/fb.h>
 #include <subdev/i2c.h>
+
+#ifdef __NetBSD__
+/*
+ * XXX Can't use bus_space here because this is all mapped through the
+ * nvbo_kmap abstraction.  Can't assume we're x86 because this is
+ * Nouveau, not Intel.
+ */
+
+#  define	__iomem		volatile
+#  define	writew		fake_writew
+
+static inline void
+fake_writew(uint16_t v, void __iomem *ptr)
+{
+
+	membar_producer();
+	*(uint16_t __iomem *)ptr = v;
+}
+#endif
 
 #define EVO_DMA_NR 9
 
@@ -127,6 +152,11 @@ nv50_pioc_create(struct nouveau_object *core, u32 bclass, u8 head,
 
 struct nv50_dmac {
 	struct nv50_chan base;
+#ifdef __NetBSD__
+	bus_dma_segment_t dmaseg;
+	bus_dmamap_t dmamap;
+	void *dmakva;
+#endif
 	dma_addr_t handle;
 	u32 *ptr;
 
@@ -141,8 +171,24 @@ nv50_dmac_destroy(struct nouveau_object *core, struct nv50_dmac *dmac)
 {
 	if (dmac->ptr) {
 		struct pci_dev *pdev = nv_device(core)->pdev;
+#ifdef __NetBSD__
+		const bus_dma_tag_t dmat = pci_dma64_available(&pdev->pd_pa) ?
+		    pdev->pd_pa.pa_dmat64 : pdev->pd_pa.pa_dmat;
+
+		bus_dmamap_unload(dmat, dmac->dmamap);
+		bus_dmamem_unmap(dmat, dmac->dmakva, PAGE_SIZE);
+		bus_dmamap_destroy(dmat, dmac->dmamap);
+		bus_dmamem_free(dmat, &dmac->dmaseg, 1);
+		dmac->handle = 0;
+		dmac->ptr = NULL;
+#else
 		pci_free_consistent(pdev, PAGE_SIZE, dmac->ptr, dmac->handle);
+#endif
 	}
+
+#ifdef __NetBSD__
+	linux_mutex_destroy(&dmac->lock);
+#endif
 
 	nv50_chan_destroy(core, &dmac->base);
 }
@@ -277,12 +323,59 @@ nv50_dmac_create(struct nouveau_object *core, u32 bclass, u8 head,
 	u32 pushbuf = *(u32 *)data;
 	int ret;
 
+#ifdef __NetBSD__
+	linux_mutex_init(&dmac->lock);
+#else
 	mutex_init(&dmac->lock);
+#endif
 
+#ifdef __NetBSD__
+    {
+	struct nouveau_device *device = nv_device(core);
+	const bus_dma_tag_t dmat = pci_dma64_available(&device->pdev->pd_pa) ?
+	    device->pdev->pd_pa.pa_dmat64 : device->pdev->pd_pa.pa_dmat;
+
+	int rsegs;
+
+	/* XXX errno NetBSD->Linux */
+	ret = -bus_dmamem_alloc(dmat, PAGE_SIZE, PAGE_SIZE, 0, &dmac->dmaseg,
+	    1, &rsegs, BUS_DMA_WAITOK);
+	if (ret)
+		return ret;
+	KASSERT(rsegs == 1);
+	/* XXX errno NetBSD->Linux */
+	ret = -bus_dmamap_create(dmat, PAGE_SIZE, 1, PAGE_SIZE, 0,
+	    BUS_DMA_WAITOK, &dmac->dmamap);
+	if (ret) {
+		bus_dmamem_free(dmat, &dmac->dmaseg, 1);
+		return ret;
+	}
+	/* XXX errno NetBSD->Linux */
+	ret = -bus_dmamem_map(dmat, &dmac->dmaseg, 1, PAGE_SIZE, &dmac->dmakva,
+	    BUS_DMA_WAITOK);
+	if (ret) {
+		bus_dmamap_destroy(dmat, dmac->dmamap);
+		bus_dmamem_free(dmat, &dmac->dmaseg, 1);
+		return ret;
+	}
+	ret = -bus_dmamap_load(dmat, dmac->dmamap, dmac->dmakva, PAGE_SIZE,
+	    NULL, BUS_DMA_WAITOK);
+	if (ret) {
+		bus_dmamem_unmap(dmat, dmac->dmakva, PAGE_SIZE);
+		bus_dmamap_destroy(dmat, dmac->dmamap);
+		bus_dmamem_free(dmat, &dmac->dmaseg, 1);
+		return ret;
+	}
+
+	dmac->handle = dmac->dmamap->dm_segs[0].ds_addr;
+	dmac->ptr = dmac->dmakva;
+    }
+#else
 	dmac->ptr = pci_alloc_consistent(nv_device(core)->pdev, PAGE_SIZE,
 					&dmac->handle);
 	if (!dmac->ptr)
 		return -ENOMEM;
+#endif
 
 	ret = nouveau_object_new(client, NVDRM_DEVICE, pushbuf,
 				 NV_DMA_FROM_MEMORY_CLASS,
@@ -1192,13 +1285,13 @@ nv50_crtc_lut_load(struct drm_crtc *crtc)
 		u16 b = nv_crtc->lut.b[i] >> 2;
 
 		if (nv_mclass(disp->core) < NVD0_DISP_CLASS) {
-			writew(r + 0x0000, lut + (i * 0x08) + 0);
-			writew(g + 0x0000, lut + (i * 0x08) + 2);
-			writew(b + 0x0000, lut + (i * 0x08) + 4);
+			writew(r + 0x0000, (char __iomem *)lut + (i * 0x08) + 0);
+			writew(g + 0x0000, (char __iomem *)lut + (i * 0x08) + 2);
+			writew(b + 0x0000, (char __iomem *)lut + (i * 0x08) + 4);
 		} else {
-			writew(r + 0x6000, lut + (i * 0x20) + 0);
-			writew(g + 0x6000, lut + (i * 0x20) + 2);
-			writew(b + 0x6000, lut + (i * 0x20) + 4);
+			writew(r + 0x6000, (char __iomem *)lut + (i * 0x20) + 0);
+			writew(g + 0x6000, (char __iomem *)lut + (i * 0x20) + 2);
+			writew(b + 0x6000, (char __iomem *)lut + (i * 0x20) + 4);
 		}
 	}
 }

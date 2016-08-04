@@ -231,9 +231,14 @@ int drm_getclient(struct drm_device *dev, void *data,
 	 */
 	if (client->idx == 0) {
 		client->auth = file_priv->authenticated;
+#ifdef __NetBSD__		/* XXX Too scary to contemplate.  */
+		client->pid = curproc->p_pid;
+		client->uid = kauth_cred_geteuid(curproc->p_cred);
+#else
 		client->pid = pid_vnr(file_priv->pid);
 		client->uid = from_kuid_munged(current_user_ns(),
 					       file_priv->uid);
+#endif
 		client->magic = 0;
 		client->iocs = 0;
 

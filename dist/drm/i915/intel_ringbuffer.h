@@ -1,6 +1,8 @@
 #ifndef _INTEL_RINGBUFFER_H_
 #define _INTEL_RINGBUFFER_H_
 
+#include <asm/bug.h>
+
 /*
  * Gen2 BSpec "1. Programming Environment" / 1.4.4.6 "Ring Buffer Use"
  * Gen3 BSpec "vol1c Memory Interface Functions" / 2.3.4.5 "Ring Buffer Use"
@@ -54,6 +56,10 @@ struct intel_ring_hangcheck {
 	bool deadlock;
 };
 
+#ifdef __NetBSD__
+#  define	__ring_iomem
+#endif
+
 struct  intel_ring_buffer {
 	const char	*name;
 	enum intel_ring_id {
@@ -64,7 +70,12 @@ struct  intel_ring_buffer {
 	} id;
 #define I915_NUM_RINGS 4
 	u32		mmio_base;
+#ifdef __NetBSD__
+	bus_space_tag_t		bst;
+	bus_space_handle_t	bsh;
+#else
 	void		__iomem *virtual_start;
+#endif
 	struct		drm_device *dev;
 	struct		drm_i915_gem_object *obj;
 
@@ -151,7 +162,11 @@ struct  intel_ring_buffer {
 	bool gpu_caches_dirty;
 	bool fbc_dirty;
 
+#ifdef __NetBSD__
+	drm_waitqueue_t irq_queue;
+#else
 	wait_queue_head_t irq_queue;
+#endif
 
 	/**
 	 * Do an explicit TLB flush before MI_SET_CONTEXT
@@ -274,7 +289,11 @@ int __must_check intel_ring_cacheline_align(struct intel_ring_buffer *ring);
 static inline void intel_ring_emit(struct intel_ring_buffer *ring,
 				   u32 data)
 {
+#ifdef __NetBSD__
+	bus_space_write_4(ring->bst, ring->bsh, ring->tail, data);
+#else
 	iowrite32(data, ring->virtual_start + ring->tail);
+#endif
 	ring->tail += 4;
 }
 static inline void intel_ring_advance(struct intel_ring_buffer *ring)

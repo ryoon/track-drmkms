@@ -67,14 +67,23 @@
 #include <linux/agp_backend.h>
 #include <linux/workqueue.h>
 #include <linux/poll.h>
+#include <linux/atomic.h>
+#include <linux/uidgid.h>
+#include <linux/kref.h>
+#include <linux/pm.h>
+#include <linux/timer.h>
+#include <linux/ktime.h>
 #include <asm/pgalloc.h>
 #include <drm/drm.h>
 #include <drm/drm_sarea.h>
+#include <asm/barrier.h>
 #include <drm/drm_vma_manager.h>
 
 #include <linux/idr.h>
 
+#ifndef __NetBSD__
 #define __OS_HAS_AGP (defined(CONFIG_AGP) || (defined(CONFIG_AGP_MODULE) && defined(MODULE)))
+#endif
 
 struct module;
 
@@ -84,7 +93,11 @@ struct drm_device;
 struct device_node;
 struct videomode;
 
+#ifdef __NetBSD__
+#include <drm/drm_os_netbsd.h>
+#else
 #include <drm/drm_os_linux.h>
+#endif
 #include <drm/drm_hashtab.h>
 #include <drm/drm_mm.h>
 
@@ -176,6 +189,13 @@ int drm_err(const char *func, const char *format, ...);
 #define DRM_ERROR(fmt, ...)				\
 	drm_err(__func__, fmt, ##__VA_ARGS__)
 
+
+#ifdef __NetBSD__
+/* XXX Use device_printf, with a device.  */
+#define	DRM_INFO(fmt, ...)				\
+	printf("drm: " fmt, ##__VA_ARGS__)
+#endif
+
 /**
  * Rate limited error output.  Like DRM_ERROR() but won't flood the log.
  *
@@ -192,8 +212,10 @@ int drm_err(const char *func, const char *format, ...);
 		drm_err(__func__, fmt, ##__VA_ARGS__);			\
 })
 
+#ifndef __NetBSD__
 #define DRM_INFO(fmt, ...)				\
 	printk(KERN_INFO "[" DRM_NAME "] " fmt, ##__VA_ARGS__)
+#endif
 
 #define DRM_INFO_ONCE(fmt, ...)				\
 	printk_once(KERN_INFO "[" DRM_NAME "] " fmt, ##__VA_ARGS__)
@@ -274,8 +296,15 @@ typedef int drm_ioctl_t(struct drm_device *dev, void *data,
 typedef int drm_ioctl_compat_t(struct file *filp, unsigned int cmd,
 			       unsigned long arg);
 
+#ifdef __NetBSD__
+/* XXX Kludge...is there a better way to do this?  */
+#define	DRM_IOCTL_NR(n)							\
+	(IOCBASECMD(n) &~ (IOC_DIRMASK | (IOCGROUP(n) << IOCGROUP_SHIFT)))
+#define	DRM_MAJOR	cdevsw_lookup_major(&drm_cdevsw)
+#else
 #define DRM_IOCTL_NR(n)                _IOC_NR(n)
 #define DRM_MAJOR       226
+#endif
 
 #define DRM_AUTH	0x1
 #define	DRM_MASTER	0x2
@@ -354,21 +383,34 @@ struct drm_waitlist {
 };
 
 struct drm_freelist {
+#ifndef __NetBSD__
 	int initialized;	       /**< Freelist in use */
 	atomic_t count;		       /**< Number of free buffers */
 	struct drm_buf *next;	       /**< End pointer */
 
+#ifdef __NetBSD__
+	drm_waitqueue_t waiting;       /**< Processes waiting on free bufs */
+#else
 	wait_queue_head_t waiting;     /**< Processes waiting on free bufs */
+#endif
+#endif
 	int low_mark;		       /**< Low water mark */
 	int high_mark;		       /**< High water mark */
+#ifndef __NetBSD__
 	atomic_t wfh;		       /**< If waiting for high mark */
 	spinlock_t lock;
+#endif
 };
 
 typedef struct drm_dma_handle {
 	dma_addr_t busaddr;
 	void *vaddr;
 	size_t size;
+#ifdef __NetBSD__
+	bus_dma_tag_t dmah_tag;
+	bus_dmamap_t dmah_map;
+	bus_dma_segment_t dmah_seg;
+#endif
 } drm_dma_handle_t;
 
 /**
@@ -415,8 +457,10 @@ struct drm_file {
 	 */
 	unsigned universal_planes:1;
 
+#ifndef __NetBSD__
 	struct pid *pid;
 	kuid_t uid;
+#endif
 	drm_magic_t magic;
 	struct list_head lhead;
 	struct drm_minor *minor;
@@ -441,7 +485,12 @@ struct drm_file {
 	struct list_head fbs;
 	struct mutex fbs_lock;
 
+#ifdef __NetBSD__
+	drm_waitqueue_t event_wait;
+	struct selinfo event_selq;
+#else
 	wait_queue_head_t event_wait;
+#endif
 	struct list_head event_list;
 	int event_space;
 
@@ -454,15 +503,27 @@ struct drm_queue {
 	atomic_t finalization;		/**< Finalization in progress */
 	atomic_t block_count;		/**< Count of processes waiting */
 	atomic_t block_read;		/**< Queue blocked for reads */
+#ifdef __NetBSD__
+	drm_waitqueue_t read_queue;	/**< Processes waiting on block_read */
+#else
 	wait_queue_head_t read_queue;	/**< Processes waiting on block_read */
+#endif
 	atomic_t block_write;		/**< Queue blocked for writes */
+#ifdef __NetBSD__
+	drm_waitqueue_t write_queue;	/**< Processes waiting on block_write */
+#else
 	wait_queue_head_t write_queue;	/**< Processes waiting on block_write */
+#endif
 	atomic_t total_queued;		/**< Total queued statistic */
 	atomic_t total_flushed;		/**< Total flushes statistic */
 	atomic_t total_locks;		/**< Total locks statistics */
 	enum drm_ctx_flags flags;	/**< Context preserving and 2D-only */
 	struct drm_waitlist waitlist;	/**< Pending buffers */
+#ifdef __NetBSD__
+	drm_waitqueue_t flush_queue;	/**< Processes waiting until flush */
+#else
 	wait_queue_head_t flush_queue;	/**< Processes waiting until flush */
+#endif
 };
 
 /**
@@ -472,7 +533,11 @@ struct drm_lock_data {
 	struct drm_hw_lock *hw_lock;	/**< Hardware lock */
 	/** Private of lock holder's file (NULL=kernel) */
 	struct drm_file *file_priv;
+#ifdef __NetBSD__
+	drm_waitqueue_t lock_queue;	/**< Queue of blocked processes */
+#else
 	wait_queue_head_t lock_queue;	/**< Queue of blocked processes */
+#endif
 	unsigned long lock_time;	/**< Time of last lock in jiffies */
 	spinlock_t spinlock;
 	uint32_t kernel_waiters;
@@ -536,9 +601,18 @@ struct drm_agp_head {
 struct drm_sg_mem {
 	unsigned long handle;
 	void *virtual;
+#ifdef __NetBSD__
+	size_t sg_size;
+	bus_dma_tag_t sg_tag;
+	bus_dmamap_t sg_map;
+	unsigned int sg_nsegs;
+	unsigned int sg_nsegs_max;
+	bus_dma_segment_t sg_segs[];
+#else
 	int pages;
 	struct page **pagelist;
 	dma_addr_t *busaddr;
+#endif
 };
 
 struct drm_sigdata {
@@ -546,6 +620,18 @@ struct drm_sigdata {
 	struct drm_hw_lock *lock;
 };
 
+#ifdef __NetBSD__
+/*
+ * XXX Remember: memory mappings only.  bm_flags must include
+ * BUS_SPACE_MAP_LINEAR.
+ */
+struct drm_bus_map {
+	bus_addr_t		bm_base;
+	bus_size_t		bm_size;
+	bus_space_handle_t	bm_bsh;
+	int			bm_flags;
+};
+#endif
 
 /**
  * Kernel side of a mapping
@@ -558,6 +644,33 @@ struct drm_local_map {
 	void *handle;		 /**< User-space: "Handle" to pass to mmap() */
 				 /**< Kernel-space: kernel-virtual address */
 	int mtrr;		 /**< MTRR slot used */
+
+#ifdef __NetBSD__
+	union {
+		/* _DRM_FRAME_BUFFER, _DRM_AGP, _DRM_REGISTERS */
+		/* XXX mtrr should be moved into this case too.  */
+		struct {
+			/*
+			 * XXX bst seems like a waste of space, but not
+			 * all accessors have the drm_device handy.
+			 */
+			bus_space_tag_t bst;
+			bus_space_handle_t bsh;
+			struct drm_bus_map *bus_map;
+		} bus_space;
+
+		/* _DRM_CONSISTENT */
+		struct drm_dma_handle *dmah;
+
+		/* _DRM_SCATTER_GATHER */
+#if 0				/* XXX stored in dev->sg instead */
+		struct drm_sg_mem *sg;
+#endif
+
+		/* _DRM_SHM */
+		/* XXX Anything?  uvm object?  */
+	} lm_data;
+#endif
 };
 
 typedef struct drm_local_map drm_local_map_t;
@@ -623,8 +736,16 @@ struct drm_gem_object {
 	/** Related drm device */
 	struct drm_device *dev;
 
+#ifdef __NetBSD__
+	/* UVM anonymous object for shared memory mappings.  */
+	struct uvm_object *gemo_shm_uao;
+
+	/* UVM object with custom pager ops for device memory mappings.  */
+	struct uvm_object gemo_uvmobj;
+#else
 	/** File representing the shmem storage */
 	struct file *filp;
+#endif
 
 	/* Mapping info for this object */
 	struct drm_vma_offset_node vma_node;
@@ -659,6 +780,7 @@ struct drm_gem_object {
 	uint32_t pending_read_domains;
 	uint32_t pending_write_domain;
 
+#ifndef __NetBSD__	    /* XXX drm prime */
 	/**
 	 * dma_buf - dma buf associated with this GEM object
 	 *
@@ -686,6 +808,7 @@ struct drm_gem_object {
 	 * simply leave it as NULL.
 	 */
 	struct dma_buf_attachment *import_attach;
+#endif
 };
 
 #include <drm/drm_crtc.h>
@@ -730,9 +853,22 @@ struct drm_master {
 #define DRM_SCANOUTPOS_INVBL        (1 << 1)
 #define DRM_SCANOUTPOS_ACCURATE     (1 << 2)
 
+struct drm_bus_irq_cookie;
+
 struct drm_bus {
 	int bus_type;
+	/*
+	 * XXX NetBSD will have a problem with this: pci_intr_handle_t
+	 * is a long on some LP64 architectures, where int is 32-bit,
+	 * such as alpha and mips64.
+	 */
 	int (*get_irq)(struct drm_device *dev);
+#ifdef __NetBSD__
+	int (*irq_install)(struct drm_device *, irqreturn_t (*)(void *), int,
+	    const char *, void *, struct drm_bus_irq_cookie **);
+	void (*irq_uninstall)(struct drm_device *,
+	    struct drm_bus_irq_cookie *);
+#endif
 	const char *(*get_name)(struct drm_device *dev);
 	int (*set_busid)(struct drm_device *dev, struct drm_master *master);
 	int (*set_unique)(struct drm_device *dev, struct drm_master *master,
@@ -889,7 +1025,7 @@ struct drm_driver {
 
 	/* these have to be filled in */
 
-	irqreturn_t(*irq_handler) (int irq, void *arg);
+	irqreturn_t(*irq_handler) (DRM_IRQ_ARGS);
 	void (*irq_preinstall) (struct drm_device *dev);
 	int (*irq_postinstall) (struct drm_device *dev);
 	void (*irq_uninstall) (struct drm_device *dev);
@@ -960,14 +1096,20 @@ struct drm_driver {
 			    uint32_t handle);
 
 	/* Driver private ops for this object */
+#ifdef __NetBSD__
+	int (*mmap_object)(struct drm_device *, off_t, size_t, int,
+	    struct uvm_object **, voff_t *, struct file *);
+	const struct uvm_pagerops *gem_uvm_ops;
+#else
 	const struct vm_operations_struct *gem_vm_ops;
+#endif
 
 	int major;
 	int minor;
 	int patchlevel;
-	char *name;
-	char *desc;
-	char *date;
+	const char *name;
+	const char *desc;
+	const char *date;
 
 	u32 driver_features;
 	int dev_priv_size;
@@ -979,7 +1121,7 @@ struct drm_driver {
 		struct platform_device *platform_device;
 		struct usb_driver *usb;
 	} kdriver;
-	struct drm_bus *bus;
+	const struct drm_bus *bus;
 
 	/* List of devices hanging off this driver with stealth attach. */
 	struct list_head legacy_dev_list;
@@ -991,6 +1133,10 @@ enum drm_minor_type {
 	DRM_MINOR_RENDER,
 	DRM_MINOR_CNT,
 };
+
+#ifdef __NetBSD__		/* XXX debugfs */
+struct seq_file;
+#endif
 
 /**
  * Info file list entry. This structure represents a debugfs or proc file to
@@ -1022,10 +1168,12 @@ struct drm_minor {
 	struct device *kdev;		/**< Linux device */
 	struct drm_device *dev;
 
+#ifndef __NetBSD__		/* XXX debugfs */
 	struct dentry *debugfs_root;
 
 	struct list_head debugfs_list;
 	struct mutex debugfs_lock; /* Protects debugfs_list. */
+#endif
 
 	/* currently active master for this node. Protected by master_mutex */
 	struct drm_master *master;
@@ -1040,7 +1188,11 @@ struct drm_pending_vblank_event {
 };
 
 struct drm_vblank_crtc {
+#ifdef __NetBSD__
+	drm_waitqueue_t queue;
+#else
 	wait_queue_head_t queue;	/**< VBLANK wait queue */
+#endif
 	struct timeval time[DRM_VBLANKTIME_RBSIZE];	/**< timestamp of current count */
 	atomic_t count;			/**< number of VBLANK interrupts */
 	atomic_t refcount;		/* number of users of vblank interruptsper crtc */
@@ -1114,6 +1266,9 @@ struct drm_device {
 	/** \name Context support */
 	/*@{ */
 	bool irq_enabled;		/**< True if irq handler is enabled */
+#ifdef __NetBSD__
+	struct drm_bus_irq_cookie *irq_cookie;
+#endif
 	__volatile__ long context_flag;	/**< Context swapping flag */
 	int last_context;		/**< Last current context */
 	/*@} */
@@ -1156,10 +1311,23 @@ struct drm_device {
 	struct platform_device *platformdev; /**< Platform device struture */
 	struct usb_device *usbdev;
 
+#ifdef __NetBSD__
+	bus_space_tag_t bst;
+	struct drm_bus_map *bus_maps;
+	unsigned bus_nmaps;
+	bus_dma_tag_t bus_dmat;
+	bus_dma_tag_t dmat;
+	bool dmat_subregion_p;
+	bus_addr_t dmat_subregion_min;
+	bus_addr_t dmat_subregion_max;
+#endif
+
 	struct drm_sg_mem *sg;	/**< Scatter gather memory */
 	unsigned int num_crtcs;                  /**< Number of CRTCs on this device */
 	struct drm_sigdata sigdata;	   /**< For block_all_signals */
+#ifndef __NetBSD__
 	sigset_t sigmask;
+#endif
 
 	struct drm_local_map *agp_buffer_map;
 	unsigned int agp_buffer_token;
@@ -1229,31 +1397,50 @@ static inline bool drm_is_primary_client(const struct drm_file *file_priv)
 /*@{*/
 
 				/* Driver support (drm_drv.h) */
+#ifndef __NetBSD__
 extern long drm_ioctl(struct file *filp,
 		      unsigned int cmd, unsigned long arg);
 extern long drm_compat_ioctl(struct file *filp,
 			     unsigned int cmd, unsigned long arg);
+#endif
 extern int drm_lastclose(struct drm_device *dev);
+#ifndef __NetBSD__
 extern bool drm_ioctl_flags(unsigned int nr, unsigned int *flags);
+#endif
 
 				/* Device support (drm_fops.h) */
 extern struct mutex drm_global_mutex;
+#ifdef __NetBSD__
+extern int drm_open_file(struct drm_file *, void *, struct drm_minor *);
+extern void drm_close_file(struct drm_file *);
+#else
 extern int drm_open(struct inode *inode, struct file *filp);
 extern int drm_stub_open(struct inode *inode, struct file *filp);
 extern ssize_t drm_read(struct file *filp, char __user *buffer,
 			size_t count, loff_t *offset);
 extern int drm_release(struct inode *inode, struct file *filp);
+#endif
 
 				/* Mapping support (drm_vm.h) */
+#ifdef __NetBSD__
+extern int drm_mmap_object(struct drm_device *, off_t, size_t, int,
+    struct uvm_object **, voff_t *, struct file *);
+extern paddr_t drm_mmap_paddr(struct drm_device *, off_t, int);
+#else
 extern int drm_mmap(struct file *filp, struct vm_area_struct *vma);
 extern int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma);
 extern void drm_vm_open_locked(struct drm_device *dev, struct vm_area_struct *vma);
 extern void drm_vm_close_locked(struct drm_device *dev, struct vm_area_struct *vma);
 extern unsigned int drm_poll(struct file *filp, struct poll_table_struct *wait);
 
+#endif
+
 				/* Memory management support (drm_memory.h) */
 #include <drm/drm_memory.h>
-
+#ifdef __NetBSD__
+extern int drm_limit_dma_space(struct drm_device *, resource_size_t,
+    resource_size_t);
+#endif
 
 				/* Misc. IOCTL support (drm_ioctl.h) */
 extern int drm_irq_by_busid(struct drm_device *dev, void *data,
@@ -1309,8 +1496,14 @@ extern int drm_remove_magic(struct drm_master *master, drm_magic_t magic);
 
 /* Cache management (drm_cache.c) */
 void drm_clflush_pages(struct page *pages[], unsigned long num_pages);
+#ifdef __NetBSD__		/* XXX drm clflush */
+void drm_clflush_pglist(struct pglist *);
+void drm_clflush_page(struct page *);
+void drm_clflush_virt_range(const void *, size_t);
+#else
 void drm_clflush_sg(struct sg_table *st);
 void drm_clflush_virt_range(char *addr, unsigned long length);
+#endif
 
 				/* Locking IOCTL support (drm_lock.h) */
 extern int drm_lock(struct drm_device *dev, void *data,
@@ -1401,6 +1594,27 @@ extern int drm_modeset_ctl(struct drm_device *dev, void *data,
 
 #include <drm/drm_agpsupport.h>
 
+#ifdef __NetBSD__
+struct drm_agp_hooks {
+	drm_ioctl_t	*agph_acquire_ioctl;
+	drm_ioctl_t	*agph_release_ioctl;
+	drm_ioctl_t	*agph_enable_ioctl;
+	drm_ioctl_t	*agph_info_ioctl;
+	drm_ioctl_t	*agph_alloc_ioctl;
+	drm_ioctl_t	*agph_free_ioctl;
+	drm_ioctl_t	*agph_bind_ioctl;
+	drm_ioctl_t	*agph_unbind_ioctl;
+	int		(*agph_release)(struct drm_device *);
+	void		(*agph_clear)(struct drm_device *);
+};
+
+extern int drm_agp_release_hook(struct drm_device *);
+extern void drm_agp_clear_hook(struct drm_device *);
+
+extern int drm_agp_register(const struct drm_agp_hooks *);
+extern void drm_agp_deregister(const struct drm_agp_hooks *);
+#endif
+
 				/* Stub support (drm_stub.h) */
 extern int drm_setmaster_ioctl(struct drm_device *dev, void *data,
 			       struct drm_file *file_priv);
@@ -1421,8 +1635,12 @@ extern unsigned int drm_timestamp_precision;
 extern unsigned int drm_timestamp_monotonic;
 
 extern struct class *drm_class;
+#ifndef __NetBSD__
 extern struct dentry *drm_debugfs_root;
 
+#else
+extern spinlock_t drm_minor_lock;
+#endif
 extern struct idr drm_minors_idr;
 
 extern struct drm_local_map *drm_getsarea(struct drm_device *dev);
@@ -1463,6 +1681,7 @@ static inline int drm_debugfs_cleanup(struct drm_minor *minor)
 }
 #endif
 
+#ifndef __NetBSD__
 				/* Info file support */
 extern int drm_name_info(struct seq_file *m, void *data);
 extern int drm_vm_info(struct seq_file *m, void *data);
@@ -1470,6 +1689,7 @@ extern int drm_bufs_info(struct seq_file *m, void *data);
 extern int drm_vblank_info(struct seq_file *m, void *data);
 extern int drm_clients_info(struct seq_file *m, void* data);
 extern int drm_gem_name_info(struct seq_file *m, void *data);
+#endif
 
 
 extern struct dma_buf *drm_gem_prime_export(struct drm_device *dev,
@@ -1488,21 +1708,27 @@ extern int drm_prime_handle_to_fd_ioctl(struct drm_device *dev, void *data,
 extern int drm_prime_fd_to_handle_ioctl(struct drm_device *dev, void *data,
 					struct drm_file *file_priv);
 
+#ifndef __NetBSD__		/* XXX temporary measure 20130212 */
 extern int drm_prime_sg_to_page_addr_arrays(struct sg_table *sgt, struct page **pages,
 					    dma_addr_t *addrs, int max_pages);
 extern struct sg_table *drm_prime_pages_to_sg(struct page **pages, int nr_pages);
 extern void drm_prime_gem_destroy(struct drm_gem_object *obj, struct sg_table *sg);
+#endif
 
 int drm_gem_dumb_destroy(struct drm_file *file,
 			 struct drm_device *dev,
 			 uint32_t handle);
 
+#ifndef __NetBSD__		/* XXX drm prime */
 void drm_prime_init_file_private(struct drm_prime_file_private *prime_fpriv);
 void drm_prime_destroy_file_private(struct drm_prime_file_private *prime_fpriv);
 void drm_prime_remove_buf_handle_locked(struct drm_prime_file_private *prime_fpriv, struct dma_buf *dma_buf);
+#endif
 
 #if DRM_DEBUG_CODE
+#ifndef __NetBSD__
 extern int drm_vma_info(struct seq_file *m, void *data);
+#endif
 #endif
 
 				/* Scatter Gather Support (drm_scatter.h) */
@@ -1522,6 +1748,13 @@ extern drm_dma_handle_t *drm_pci_alloc(struct drm_device *dev, size_t size,
 				       size_t align);
 extern void __drm_pci_free(struct drm_device *dev, drm_dma_handle_t * dmah);
 extern void drm_pci_free(struct drm_device *dev, drm_dma_handle_t * dmah);
+#ifdef __NetBSD__
+extern int drmkms_pci_agp_guarantee_initialized(void);
+extern int drm_pci_attach(device_t, const struct pci_attach_args *,
+    struct pci_dev *, struct drm_driver *, unsigned long,
+    struct drm_device **);
+extern int drm_pci_detach(struct drm_device *, int);
+#endif
 
 			       /* sysfs support (drm_sysfs.c) */
 struct drm_sysfs_class;
@@ -1542,11 +1775,20 @@ int drm_gem_object_init(struct drm_device *dev,
 			struct drm_gem_object *obj, size_t size);
 void drm_gem_private_object_init(struct drm_device *dev,
 				 struct drm_gem_object *obj, size_t size);
+#ifdef __NetBSD__
+void drm_gem_pager_reference(struct uvm_object *);
+void drm_gem_pager_detach(struct uvm_object *);
+int drm_gem_mmap_object(struct drm_device *, off_t, size_t, int,
+    struct uvm_object **, voff_t *, struct file *);
+int drm_gem_or_legacy_mmap_object(struct drm_device *, off_t, size_t, int,
+    struct uvm_object **, voff_t *, struct file *);
+#else
 void drm_gem_vm_open(struct vm_area_struct *vma);
 void drm_gem_vm_close(struct vm_area_struct *vma);
 int drm_gem_mmap_obj(struct drm_gem_object *obj, unsigned long obj_size,
 		     struct vm_area_struct *vma);
 int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma);
+#endif
 
 #include <drm/drm_global.h>
 
@@ -1566,13 +1808,11 @@ drm_gem_object_unreference(struct drm_gem_object *obj)
 static inline void
 drm_gem_object_unreference_unlocked(struct drm_gem_object *obj)
 {
-	if (obj && !atomic_add_unless(&obj->refcount.refcount, -1, 1)) {
-		struct drm_device *dev = obj->dev;
-
-		mutex_lock(&dev->struct_mutex);
-		if (likely(atomic_dec_and_test(&obj->refcount.refcount)))
-			drm_gem_object_free(&obj->refcount);
-		mutex_unlock(&dev->struct_mutex);
+	if (obj != NULL) {
+		struct drm_device *const dev = obj->dev;
+		if (kref_put_mutex(&obj->refcount, drm_gem_object_free,
+			&dev->struct_mutex))
+			mutex_unlock(&dev->struct_mutex);
 	}
 }
 
@@ -1670,10 +1910,180 @@ extern int drm_platform_init(struct drm_driver *driver, struct platform_device *
 /* returns true if currently okay to sleep */
 static __inline__ bool drm_can_sleep(void)
 {
+#ifdef __NetBSD__
+	return false;		/* XXX */
+#else
 	if (in_atomic() || in_dbg_master() || irqs_disabled())
 		return false;
 	return true;
+#endif
 }
+
+#ifdef __NetBSD__
+static inline bool
+DRM_IS_BUS_SPACE(struct drm_local_map *map)
+{
+	switch (map->type) {
+	case _DRM_FRAME_BUFFER:
+		panic("I don't know how to access drm frame buffer memory!");
+
+	case _DRM_REGISTERS:
+		return true;
+
+	case _DRM_SHM:
+		panic("I don't know how to access drm shared memory!");
+
+	case _DRM_AGP:
+		panic("I don't know how to access drm agp memory!");
+
+	case _DRM_SCATTER_GATHER:
+		panic("I don't know how to access drm scatter-gather memory!");
+
+	case _DRM_CONSISTENT:
+		/*
+		 * XXX Old drm uses bus space access for this, but
+		 * consistent maps don't have bus space handles!  They
+		 * do, however, have kernel virtual addresses in the
+		 * map->handle, so maybe that's right.
+		 */
+#if 0
+		return false;
+#endif
+		panic("I don't know how to access drm consistent memory!");
+
+	default:
+		panic("I don't know what kind of memory you mean!");
+	}
+}
+
+static inline uint8_t
+DRM_READ8(struct drm_local_map *map, bus_size_t offset)
+{
+	if (DRM_IS_BUS_SPACE(map))
+		return bus_space_read_1(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset);
+	else
+		return *(volatile uint8_t *)((vaddr_t)map->handle + offset);
+}
+
+static inline uint16_t
+DRM_READ16(struct drm_local_map *map, bus_size_t offset)
+{
+	if (DRM_IS_BUS_SPACE(map))
+		return bus_space_read_2(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset);
+	else
+		return *(volatile uint16_t *)((vaddr_t)map->handle + offset);
+}
+
+static inline uint32_t
+DRM_READ32(struct drm_local_map *map, bus_size_t offset)
+{
+	if (DRM_IS_BUS_SPACE(map))
+		return bus_space_read_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset);
+	else
+		return *(volatile uint32_t *)((vaddr_t)map->handle + offset);
+}
+
+static inline uint64_t
+DRM_READ64(struct drm_local_map *map, bus_size_t offset)
+{
+	if (DRM_IS_BUS_SPACE(map)) {
+#if _LP64			/* XXX How to detect bus_space_read_8?  */
+		return bus_space_read_8(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset);
+#elif _BYTE_ORDER == _LITTLE_ENDIAN
+		/* XXX Yes, this is sketchy.  */
+		return bus_space_read_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset) |
+		    ((uint64_t)bus_space_read_4(map->lm_data.bus_space.bst,
+			map->lm_data.bus_space.bsh, (offset + 4)) << 32);
+#else
+		/* XXX Yes, this is sketchy.  */
+		return bus_space_read_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, (offset + 4)) |
+		    ((uint64_t)bus_space_read_4(map->lm_data.bus_space.bst,
+			map->lm_data.bus_space.bsh, offset) << 32);
+#endif
+	} else {
+		return *(volatile uint64_t *)((vaddr_t)map->handle + offset);
+	}
+}
+
+static inline void
+DRM_WRITE8(struct drm_local_map *map, bus_size_t offset, uint8_t value)
+{
+	if (DRM_IS_BUS_SPACE(map))
+		bus_space_write_1(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset, value);
+	else
+		*(volatile uint8_t *)((vaddr_t)map->handle + offset) = value;
+}
+
+static inline void
+DRM_WRITE16(struct drm_local_map *map, bus_size_t offset, uint16_t value)
+{
+	if (DRM_IS_BUS_SPACE(map))
+		bus_space_write_2(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset, value);
+	else
+		*(volatile uint16_t *)((vaddr_t)map->handle + offset) = value;
+}
+
+static inline void
+DRM_WRITE32(struct drm_local_map *map, bus_size_t offset, uint32_t value)
+{
+	if (DRM_IS_BUS_SPACE(map))
+		bus_space_write_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset, value);
+	else
+		*(volatile uint32_t *)((vaddr_t)map->handle + offset) = value;
+}
+
+static inline void
+DRM_WRITE64(struct drm_local_map *map, bus_size_t offset, uint64_t value)
+{
+	if (DRM_IS_BUS_SPACE(map)) {
+#if _LP64			/* XXX How to detect bus_space_write_8?  */
+		bus_space_write_8(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset, value);
+#elif _BYTE_ORDER == _LITTLE_ENDIAN
+		bus_space_write_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset, (value & 0xffffffffU));
+		bus_space_write_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, (offset + 4), (value >> 32));
+#else
+		bus_space_write_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, offset, (value >> 32));
+		bus_space_write_4(map->lm_data.bus_space.bst,
+		    map->lm_data.bus_space.bsh, (offset + 4),
+		    (value & 0xffffffffU));
+#endif
+	} else {
+		*(volatile uint64_t *)((vaddr_t)map->handle + offset) = value;
+	}
+}
+#endif	/* defined(__NetBSD__) */
+
+#ifdef __NetBSD__
+
+/* XXX This is pretty kludgerific.  */
+
+#include <linux/io-mapping.h>
+
+static inline struct io_mapping *
+drm_io_mapping_create_wc(struct drm_device *dev, resource_size_t addr,
+    unsigned long size)
+{
+	return bus_space_io_mapping_create_wc(dev->bst, addr, size);
+}
+
+#endif	/* defined(__NetBSD__) */
+
+#ifdef __NetBSD__
+extern const struct cdevsw drm_cdevsw;
+#endif
 
 #endif				/* __KERNEL__ */
 #endif

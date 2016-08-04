@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_gem.c,v 1.4 2016/01/29 23:58:22 riastradh Exp $	*/
+
 /*
  * Copyright (C) 2008 Ben Skeggs.
  * All Rights Reserved.
@@ -24,7 +26,12 @@
  *
  */
 
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_gem.c,v 1.4 2016/01/29 23:58:22 riastradh Exp $");
+
 #include <subdev/fb.h>
+
+#include <linux/err.h>		/* XXX */
 
 #include "nouveau_drm.h"
 #include "nouveau_dma.h"
@@ -40,13 +47,20 @@ nouveau_gem_object_del(struct drm_gem_object *gem)
 	struct nouveau_bo *nvbo = nouveau_gem_object(gem);
 	struct ttm_buffer_object *bo = &nvbo->bo;
 
+#ifndef __NetBSD__		/* XXX drm prime */
 	if (gem->import_attach)
 		drm_prime_gem_destroy(gem, nvbo->bo.sg);
+#endif
 
 	drm_gem_object_release(gem);
 
 	/* reset filp so nouveau_bo_del_ttm() can test for it */
+#ifdef __NetBSD__
+	/* XXX Whattakludge!  */
+	gem->gemo_shm_uao = NULL;
+#else
 	gem->filp = NULL;
+#endif
 	ttm_bo_unref(&bo);
 }
 
@@ -184,7 +198,9 @@ nouveau_gem_new(struct drm_device *dev, int size, int align, uint32_t domain,
 		return -ENOMEM;
 	}
 
+#ifndef __NetBSD__		/* XXX Let TTM swap; skip GEM like radeon.  */
 	nvbo->bo.persistent_swap_storage = nvbo->gem.filp;
+#endif
 	return 0;
 }
 
@@ -446,6 +462,10 @@ validate_sync(struct nouveau_channel *chan, struct nouveau_bo *nvbo)
 
 	return ret;
 }
+
+#ifdef __NetBSD__		/* XXX yargleblargh */
+#  define	__force
+#endif
 
 static int
 validate_list(struct nouveau_channel *chan, struct nouveau_cli *cli,
@@ -863,19 +883,6 @@ out_next:
 	}
 
 	return nouveau_abi16_put(abi16, ret);
-}
-
-static inline uint32_t
-domain_to_ttm(struct nouveau_bo *nvbo, uint32_t domain)
-{
-	uint32_t flags = 0;
-
-	if (domain & NOUVEAU_GEM_DOMAIN_VRAM)
-		flags |= TTM_PL_FLAG_VRAM;
-	if (domain & NOUVEAU_GEM_DOMAIN_GART)
-		flags |= TTM_PL_FLAG_TT;
-
-	return flags;
 }
 
 int

@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_bsp_nv98.c,v 1.1.1.1 2014/08/06 12:36:24 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs, Maarten Lankhorst, Ilia Mirkin
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_bsp_nv98.c,v 1.1.1.1 2014/08/06 12:36:24 riastradh Exp $");
 
 #include <engine/falcon.h>
 #include <engine/bsp.h>

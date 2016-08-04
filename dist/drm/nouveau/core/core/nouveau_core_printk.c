@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_core_printk.c,v 1.2 2014/08/06 15:01:33 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_core_printk.c,v 1.2 2014/08/06 15:01:33 riastradh Exp $");
 
 #include <core/object.h>
 #include <core/client.h>
@@ -62,7 +67,8 @@ nv_printk_(struct nouveau_object *object, int level, const char *fmt, ...)
 	if (object && !nv_iclass(object, NV_CLIENT_CLASS)) {
 		struct nouveau_object *device = object;
 		struct nouveau_object *subdev = object;
-		char obuf[64], *ofmt = "";
+		char obuf[64];
+		const char *ofmt = "";
 
 		if (object->engine) {
 			snprintf(obuf, sizeof(obuf), "[0x%08x][%p]",

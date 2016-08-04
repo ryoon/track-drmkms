@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_clock_nv40.c,v 1.1.1.1 2014/08/06 12:36:29 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_clock_nv40.c,v 1.1.1.1 2014/08/06 12:36:29 riastradh Exp $");
 
 #include <subdev/clock.h>
 #include <subdev/bios.h>

@@ -43,6 +43,7 @@
 #ifdef CONFIG_DEBUG_FS
 #include <linux/seq_file.h>
 #endif
+#include <linux/spinlock.h>
 
 enum drm_mm_search_flags {
 	DRM_MM_SEARCH_DEFAULT =		0,

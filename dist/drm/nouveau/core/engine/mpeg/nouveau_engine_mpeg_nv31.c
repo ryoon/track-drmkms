@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_mpeg_nv31.c,v 1.1.1.1 2014/08/06 12:36:27 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_mpeg_nv31.c,v 1.1.1.1 2014/08/06 12:36:27 riastradh Exp $");
 
 #include <core/client.h>
 #include <core/os.h>

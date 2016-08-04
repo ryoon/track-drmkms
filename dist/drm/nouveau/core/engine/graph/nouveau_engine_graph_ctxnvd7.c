@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_graph_ctxnvd7.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $	*/
+
 /*
  * Copyright 2013 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs <bskeggs@redhat.com>
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_graph_ctxnvd7.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $");
 
 #include "ctxnvc0.h"
 
@@ -217,7 +222,7 @@ nvd7_grctx_generate_mods(struct nvc0_graph_priv *priv, struct nvc0_grctx *info)
 	mmio_list(0x17e91c, 0x03060609, 0, 0); /* different from kepler */
 }
 
-void
+static void
 nvd7_grctx_generate_main(struct nvc0_graph_priv *priv, struct nvc0_grctx *info)
 {
 	struct nvc0_grctx_oclass *oclass = (void *)nv_engine(priv)->cclass;

@@ -30,6 +30,17 @@
 #ifndef _I915_DRV_H_
 #define _I915_DRV_H_
 
+#if defined(__NetBSD__)
+#ifdef _KERNEL_OPT
+#if defined(i386) || defined(amd64)
+#include "acpica.h"
+#endif	/* i386 || amd64 */
+#endif	/* _KERNEL_OPT */
+#if (NACPICA > 0)
+#define CONFIG_ACPI
+#endif	/* NACPICA > 0 */
+#endif	/* __NetBSD__ */
+
 #include <uapi/drm/i915_drm.h>
 
 #include "i915_reg.h"
@@ -42,7 +53,10 @@
 #include <linux/backlight.h>
 #include <linux/intel-iommu.h>
 #include <linux/kref.h>
+#include <linux/completion.h>
+#include <linux/shrinker.h>
 #include <linux/pm_qos.h>
+#include <linux/sched.h>
 
 /* General customization:
  */
@@ -53,7 +67,7 @@
 #define DRIVER_DESC		"Intel Graphics"
 #define DRIVER_DATE		"20080730"
 
-enum pipe {
+enum i915_pipe {
 	INVALID_PIPE = -1,
 	PIPE_A = 0,
 	PIPE_B,
@@ -247,6 +261,11 @@ struct opregion_acpi;
 struct opregion_swsci;
 struct opregion_asle;
 
+#ifdef __NetBSD__		/* XXX acpi iomem */
+#  include <linux/acpi_io.h>
+#  define	__iomem			__acpi_iomem
+#endif
+
 struct intel_opregion {
 	struct opregion_header __iomem *header;
 	struct opregion_acpi __iomem *acpi;
@@ -259,6 +278,10 @@ struct intel_opregion {
 	struct work_struct asle_work;
 };
 #define OPREGION_SIZE            (8*1024)
+
+#ifdef __NetBSD__		/* XXX acpi iomem */
+#  undef	__iomem
+#endif
 
 struct intel_overlay;
 struct intel_overlay_error_state;
@@ -622,7 +645,12 @@ struct i915_address_space {
 
 	struct {
 		dma_addr_t addr;
+#ifdef __NetBSD__
+		bus_dma_segment_t seg;
+		bus_dmamap_t map;
+#else
 		struct page *page;
+#endif
 	} scratch;
 
 	/**
@@ -657,11 +685,20 @@ struct i915_address_space {
 			    uint64_t length,
 			    bool use_scratch);
 	void (*insert_entries)(struct i915_address_space *vm,
+#ifdef __NetBSD__
+			       bus_dmamap_t dmamap,
+#else
 			       struct sg_table *st,
+#endif
 			       uint64_t start,
 			       enum i915_cache_level cache_level);
 	void (*cleanup)(struct i915_address_space *vm);
 };
+
+#ifdef __NetBSD__
+#  define	__gtt_iomem
+#  define	__iomem __gtt_iomem
+#endif
 
 /* The Graphics Translation Table is the way in which GEN hardware translates a
  * Graphics Virtual Address into a Physical Address. In addition to the normal
@@ -679,7 +716,26 @@ struct i915_gtt {
 	phys_addr_t mappable_base;	/* PA of our GMADR */
 
 	/** "Graphics Stolen Memory" holds the global PTEs */
+#ifdef __NetBSD__
+	/*
+	 * This is not actually the `Graphics Stolen Memory'; it is the
+	 * graphics translation table, which we write to through the
+	 * GTTADR/GTTMMADR PCI BAR, and which is backed by `Graphics
+	 * GTT Stolen Memory'.  That isn't the `Graphics Stolen Memory'
+	 * either, although it is stolen from main memory.
+	 */
+	bus_space_tag_t		bst;
+	bus_space_handle_t	bsh;
+	bus_size_t		size;
+
+	/* Maximum physical address that can be wired into a GTT entry.  */
+	uint64_t		max_paddr;
+
+	/* Page freelist for pages limited to the above maximum address.  */
+	int			pgfl;
+#else
 	void __iomem *gsm;
+#endif
 
 	bool do_idle_maps;
 
@@ -692,12 +748,36 @@ struct i915_gtt {
 };
 #define gtt_total_entries(gtt) ((gtt).base.total >> PAGE_SHIFT)
 
+#ifdef __NetBSD__
+#  undef	__iomem
+#  undef	__gtt_iomem
+#endif
+
 #define GEN8_LEGACY_PDPS 4
 struct i915_hw_ppgtt {
 	struct i915_address_space base;
 	struct kref ref;
 	struct drm_mm_node node;
 	unsigned num_pd_entries;
+#ifdef __NetBSD__
+	union {
+		struct {
+			unsigned		npdp;
+			bus_dma_segment_t	pd_segs[GEN8_LEGACY_PDPS];
+			bus_dmamap_t		pd_map;
+			struct {
+				/* XXX Should be GEN8_PDES_PER_PAGE.  */
+				bus_dma_segment_t pt_segs[PAGE_SIZE/8];
+				bus_dmamap_t pt_map;
+			} pd[GEN8_LEGACY_PDPS];
+		}	*gen8;
+		struct {
+			bus_size_t		pd_base;
+			bus_dma_segment_t	*pt_segs; /* num_pd_entries */
+			bus_dmamap_t		pt_map;
+		}	*gen6;
+	} u;
+#else
 	unsigned num_pd_pages; /* gen8+ */
 	union {
 		struct page **pt_pages;
@@ -712,6 +792,7 @@ struct i915_hw_ppgtt {
 		dma_addr_t *pt_dma_addr;
 		dma_addr_t *gen8_pt_dma_addr[4];
 	};
+#endif
 
 	struct i915_hw_context *ctx;
 
@@ -1083,7 +1164,11 @@ struct i915_power_domains {
 
 struct i915_dri1_state {
 	unsigned allow_batchbuffer : 1;
+#ifdef __NetBSD__
+	bus_space_handle_t gfx_hws_cpu_bsh;
+#else
 	u32 __iomem *gfx_hws_cpu_addr;
+#endif
 
 	unsigned int cpp;
 	int back_offset;
@@ -1243,7 +1328,12 @@ struct i915_gpu_error {
 	 * Waitqueue to signal when the reset has completed. Used by clients
 	 * that wait for dev_priv->mm.wedged to settle.
 	 */
+#ifdef __NetBSD__
+	spinlock_t reset_lock;
+	drm_waitqueue_t reset_queue;
+#else
 	wait_queue_head_t reset_queue;
+#endif
 
 	/* For gpu hang simulation. */
 	unsigned int stop_rings;
@@ -1397,17 +1487,30 @@ struct intel_pipe_crc {
 	struct intel_pipe_crc_entry *entries;
 	enum intel_pipe_crc_source source;
 	int head, tail;
+#ifdef __NetBSD__
+	drm_waitqueue_t wq;
+#else
 	wait_queue_head_t wq;
+#endif
 };
+
+#ifdef __NetBSD__
+#  define	__i915_iomem
+#  define	__iomem __i915_iomem
+#endif
 
 typedef struct drm_i915_private {
 	struct drm_device *dev;
 	struct kmem_cache *slab;
 
-	const struct intel_device_info info;
+	struct intel_device_info info;
 
 	int relative_constants_mode;
 
+#ifdef __NetBSD__
+	bus_space_tag_t regs_bst;
+	bus_space_handle_t regs_bsh;
+#endif
 	void __iomem *regs;
 
 	struct intel_uncore uncore;
@@ -1424,7 +1527,12 @@ typedef struct drm_i915_private {
 	 */
 	uint32_t gpio_mmio_base;
 
+#ifdef __NetBSD__
+	spinlock_t gmbus_wait_lock;
+	drm_waitqueue_t gmbus_wait_queue;
+#else
 	wait_queue_head_t gmbus_wait_queue;
+#endif
 
 	struct pci_dev *bridge_dev;
 	struct intel_ring_buffer ring[I915_NUM_RINGS];
@@ -1519,7 +1627,13 @@ typedef struct drm_i915_private {
 
 	struct drm_crtc *plane_to_crtc_mapping[I915_MAX_PIPES];
 	struct drm_crtc *pipe_to_crtc_mapping[I915_MAX_PIPES];
+#ifdef __NetBSD__
+	/* XXX The locking scheme looks broken.  This mutex is a stop-gap.  */
+	struct spinlock pending_flip_lock;
+	drm_waitqueue_t pending_flip_queue;
+#else
 	wait_queue_head_t pending_flip_queue;
+#endif
 
 #ifdef CONFIG_DEBUG_FS
 	struct intel_pipe_crc pipe_crc[I915_MAX_PIPES];
@@ -1606,6 +1720,11 @@ typedef struct drm_i915_private {
 	/* Old ums support infrastructure, same warning applies. */
 	struct i915_ums_state ums;
 } drm_i915_private_t;
+
+#ifdef __NetBSD__
+#  undef	__iomem
+#  undef	__i915_iomem
+#endif
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)
 {
@@ -1725,7 +1844,14 @@ struct drm_i915_gem_object {
 	unsigned int has_global_gtt_mapping:1;
 	unsigned int has_dma_mapping:1;
 
+#ifdef __NetBSD__
+	struct pglist igo_pageq;
+	bus_dma_segment_t *pages; /* `pages' is an expedient misnomer.  */
+	int igo_nsegs;
+	bus_dmamap_t igo_dmamap;
+#else
 	struct sg_table *pages;
+#endif
 	int pages_pin_count;
 
 	/* prime dma-buf support */
@@ -2043,6 +2169,10 @@ extern int i915_resume(struct drm_device *dev);
 extern int i915_master_create(struct drm_device *dev, struct drm_master *master);
 extern void i915_master_destroy(struct drm_device *dev, struct drm_master *master);
 
+extern int i915_drm_freeze(struct drm_device *dev);
+extern int i915_drm_thaw_early(struct drm_device *dev);
+extern int i915_drm_thaw(struct drm_device *dev);
+
 /* i915_params.c */
 struct i915_params {
 	int modeset;
@@ -2115,13 +2245,14 @@ extern void intel_uncore_early_sanitize(struct drm_device *dev);
 extern void intel_uncore_init(struct drm_device *dev);
 extern void intel_uncore_check_errors(struct drm_device *dev);
 extern void intel_uncore_fini(struct drm_device *dev);
+extern void intel_uncore_destroy(struct drm_device *dev);
 
 void
-i915_enable_pipestat(struct drm_i915_private *dev_priv, enum pipe pipe,
+i915_enable_pipestat(struct drm_i915_private *dev_priv, enum i915_pipe pipe,
 		     u32 status_mask);
 
 void
-i915_disable_pipestat(struct drm_i915_private *dev_priv, enum pipe pipe,
+i915_disable_pipestat(struct drm_i915_private *dev_priv, enum i915_pipe pipe,
 		      u32 status_mask);
 
 void valleyview_enable_display_irqs(struct drm_i915_private *dev_priv);
@@ -2205,6 +2336,24 @@ int i915_gem_obj_prepare_shmem_read(struct drm_i915_gem_object *obj,
 				    int *needs_clflush);
 
 int __must_check i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
+#ifdef __NetBSD__		/* XXX */
+static inline struct page *
+i915_gem_object_get_page(struct drm_i915_gem_object *obj, int n)
+{
+
+	/*
+	 * Pages must be pinned so that we need not hold the lock to
+	 * prevent them from disappearing.
+	 */
+	KASSERT(obj->pages != NULL);
+	mutex_enter(obj->base.gemo_shm_uao->vmobjlock);
+	struct vm_page *const page = uvm_pagelookup(obj->base.gemo_shm_uao,
+	    ptoa(n));
+	mutex_exit(obj->base.gemo_shm_uao->vmobjlock);
+
+	return container_of(page, struct page, p_vmp);
+}
+#else
 static inline struct page *i915_gem_object_get_page(struct drm_i915_gem_object *obj, int n)
 {
 	struct sg_page_iter sg_iter;
@@ -2214,6 +2363,7 @@ static inline struct page *i915_gem_object_get_page(struct drm_i915_gem_object *
 
 	return NULL;
 }
+#endif
 static inline void i915_gem_object_pin_pages(struct drm_i915_gem_object *obj)
 {
 	BUG_ON(obj->pages == NULL);
@@ -2310,7 +2460,12 @@ int __i915_add_request(struct intel_ring_buffer *ring,
 	__i915_add_request(ring, NULL, NULL, seqno)
 int __must_check i915_wait_seqno(struct intel_ring_buffer *ring,
 				 uint32_t seqno);
+#ifdef __NetBSD__		/* XXX */
+int i915_gem_fault(struct uvm_faultinfo *, vaddr_t, struct vm_page **,
+    int, int, vm_prot_t, int);
+#else
 int i915_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf);
+#endif
 int __must_check
 i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj,
 				  bool write);
@@ -2604,14 +2759,27 @@ intel_opregion_notify_adapter(struct drm_device *dev, pci_power_t state)
 
 /* intel_acpi.c */
 #ifdef CONFIG_ACPI
+#ifdef __NetBSD__
+extern void intel_register_dsm_handler(struct drm_device *);
+#else
 extern void intel_register_dsm_handler(void);
+#endif
 extern void intel_unregister_dsm_handler(void);
 #else
+#ifdef __NetBSD__
+static inline void
+intel_register_dsm_handler(struct drm_device *dev)
+{
+	return;
+}
+#else
 static inline void intel_register_dsm_handler(void) { return; }
+#endif
 static inline void intel_unregister_dsm_handler(void) { return; }
 #endif /* CONFIG_ACPI */
 
 /* modesetting */
+extern void i915_disable_vga(struct drm_device *dev);
 extern void intel_modeset_init_hw(struct drm_device *dev);
 extern void intel_modeset_suspend_hw(struct drm_device *dev);
 extern void intel_modeset_init(struct drm_device *dev);
@@ -2676,8 +2844,8 @@ u32 vlv_bunit_read(struct drm_i915_private *dev_priv, u32 reg);
 void vlv_bunit_write(struct drm_i915_private *dev_priv, u32 reg, u32 val);
 u32 vlv_gps_core_read(struct drm_i915_private *dev_priv, u32 reg);
 void vlv_gps_core_write(struct drm_i915_private *dev_priv, u32 reg, u32 val);
-u32 vlv_dpio_read(struct drm_i915_private *dev_priv, enum pipe pipe, int reg);
-void vlv_dpio_write(struct drm_i915_private *dev_priv, enum pipe pipe, int reg, u32 val);
+u32 vlv_dpio_read(struct drm_i915_private *dev_priv, enum i915_pipe pipe, int reg);
+void vlv_dpio_write(struct drm_i915_private *dev_priv, enum i915_pipe pipe, int reg, u32 val);
 u32 intel_sbi_read(struct drm_i915_private *dev_priv, u16 reg,
 		   enum intel_sbi_destination destination);
 void intel_sbi_write(struct drm_i915_private *dev_priv, u16 reg, u32 value,

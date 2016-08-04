@@ -35,8 +35,12 @@
 #include <linux/export.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
+#ifdef CONFIG_VIDEOMODE_HELPERS
+#ifdef CONFIG_OF
 #include <video/of_videomode.h>
+#endif
 #include <video/videomode.h>
+#endif
 #include <drm/drm_modes.h>
 
 #include "drm_crtc_internal.h"
@@ -238,7 +242,7 @@ struct drm_display_mode *drm_cvt_mode(struct drm_device *dev, int hdisplay,
 		/* 3) Nominal HSync width (% of line period) - default 8 */
 #define CVT_HSYNC_PERCENTAGE	8
 		unsigned int hblank_percentage;
-		int vsyncandback_porch, vback_porch, hblank;
+		int vsyncandback_porch, vback_porch __unused, hblank;
 
 		/* estimated the horizontal period */
 		tmp1 = HV_FACTOR * 1000000  -
@@ -388,9 +392,9 @@ drm_gtf_mode_complex(struct drm_device *dev, int hdisplay, int vdisplay,
 	int top_margin, bottom_margin;
 	int interlace;
 	unsigned int hfreq_est;
-	int vsync_plus_bp, vback_porch;
-	unsigned int vtotal_lines, vfieldrate_est, hperiod;
-	unsigned int vfield_rate, vframe_rate;
+	int vsync_plus_bp, vback_porch __unused;
+	unsigned int vtotal_lines, vfieldrate_est __unused, hperiod __unused;
+	unsigned int vfield_rate, vframe_rate __unused;
 	int left_margin, right_margin;
 	unsigned int total_active_pixels, ideal_duty_cycle;
 	unsigned int hblank, total_pixels, pixel_freq;
@@ -1081,15 +1085,17 @@ bool drm_mode_parse_command_line_for_connector(const char *mode_option,
 	const char *name;
 	unsigned int namelen;
 	bool res_specified = false, bpp_specified = false, refresh_specified = false;
-	unsigned int xres = 0, yres = 0, bpp = 32, refresh = 0;
+	long xres = 0, yres = 0, bpp = 32, refresh = 0;
 	bool yres_specified = false, cvt = false, rb = false;
 	bool interlace = false, margins = false, was_digit = false;
 	int i;
 	enum drm_connector_force force = DRM_FORCE_UNSPECIFIED;
 
+#if !defined(__NetBSD__)
 #ifdef CONFIG_FB
 	if (!mode_option)
 		mode_option = fb_mode_option;
+#endif
 #endif
 
 	if (!mode_option) {
@@ -1104,26 +1110,35 @@ bool drm_mode_parse_command_line_for_connector(const char *mode_option,
 		case '@':
 			if (!refresh_specified && !bpp_specified &&
 			    !yres_specified && !cvt && !rb && was_digit) {
-				refresh = simple_strtol(&name[i+1], NULL, 10);
-				refresh_specified = true;
-				was_digit = false;
+				if (kstrtol(&name[i+1], 10, &refresh) == 0) {
+					refresh_specified = true;
+					was_digit = false;
+				} else {
+					goto done;
+				}
 			} else
 				goto done;
 			break;
 		case '-':
 			if (!bpp_specified && !yres_specified && !cvt &&
 			    !rb && was_digit) {
-				bpp = simple_strtol(&name[i+1], NULL, 10);
-				bpp_specified = true;
-				was_digit = false;
+				if (kstrtol(&name[i+1], 10, &bpp) == 0) {
+					bpp_specified = true;
+					was_digit = false;
+				} else {
+					goto done;
+				}
 			} else
 				goto done;
 			break;
 		case 'x':
 			if (!yres_specified && was_digit) {
-				yres = simple_strtol(&name[i+1], NULL, 10);
-				yres_specified = true;
-				was_digit = false;
+				if (kstrtol(&name[i+1], 10, &yres) == 0) {
+					yres_specified = true;
+					was_digit = false;
+				} else {
+					goto done;
+				}
 			} else
 				goto done;
 			break;
@@ -1181,8 +1196,8 @@ bool drm_mode_parse_command_line_for_connector(const char *mode_option,
 	}
 
 	if (i < 0 && yres_specified) {
-		char *ch;
-		xres = simple_strtol(name, &ch, 10);
+		char *ch = NULL;
+		xres = strtoll(name, &ch, 10);
 		if ((ch != NULL) && (*ch == 'x'))
 			res_specified = true;
 		else
@@ -1193,7 +1208,7 @@ bool drm_mode_parse_command_line_for_connector(const char *mode_option,
 	}
 done:
 	if (i >= 0) {
-		printk(KERN_WARNING
+		DRM_ERROR(
 			"parse error at position %i in video mode '%s'\n",
 			i, name);
 		mode->specified = false;

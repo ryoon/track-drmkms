@@ -21,10 +21,32 @@
  * IN THE SOFTWARE.
  */
 
+#include <linux/err.h>
 #include "i915_drv.h"
 #include "intel_drv.h"
 
 #define FORCEWAKE_ACK_TIMEOUT_MS 2
+
+#ifdef __NetBSD__
+
+#define	__raw_i915_read8(dev_priv, reg) bus_space_read_1((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg))
+#define	__raw_i915_write8(dev_priv, reg, val) bus_space_write_1((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg), (val))
+
+#define	__raw_i915_read16(dev_priv, reg) bus_space_read_2((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg))
+#define	__raw_i915_write16(dev_priv, reg, val) bus_space_write_2((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg), (val))
+
+#define	__raw_i915_read32(dev_priv, reg) bus_space_read_4((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg))
+#define	__raw_i915_write32(dev_priv, reg, val) bus_space_write_4((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg), (val))
+
+#ifdef _LP64
+#define	__raw_i915_read64(dev_priv, reg) bus_space_read_8((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg))
+#define	__raw_i915_write64(dev_priv, reg, val) bus_space_write_8((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg), (val))
+#else
+#define	__raw_i915_read64(dev_priv, reg) (bus_space_read_4((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg)) | ((uint64_t)bus_space_read_4((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg) + 4) << 32))
+#define	__raw_i915_write64(dev_priv, reg, val) (bus_space_write_4((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg), (uint32_t)(val)), bus_space_write_4((dev_priv)->regs_bst, (dev_priv)->regs_bsh, (reg) + 4, (uint32_t)((val) >> 32)))
+#endif
+
+#else
 
 #define __raw_i915_read8(dev_priv__, reg__) readb((dev_priv__)->regs + (reg__))
 #define __raw_i915_write8(dev_priv__, reg__, val__) writeb(val__, (dev_priv__)->regs + (reg__))
@@ -37,6 +59,8 @@
 
 #define __raw_i915_read64(dev_priv__, reg__) readq((dev_priv__)->regs + (reg__))
 #define __raw_i915_write64(dev_priv__, reg__, val__) writeq(val__, (dev_priv__)->regs + (reg__))
+
+#endif
 
 #define __raw_posting_read(dev_priv__, reg__) (void)__raw_i915_read32(dev_priv__, reg__)
 
@@ -854,6 +878,15 @@ void intel_uncore_fini(struct drm_device *dev)
 	intel_uncore_forcewake_reset(dev, false);
 }
 
+void intel_uncore_destroy(struct drm_device *dev)
+{
+#ifdef __NetBSD__
+	struct drm_i915_private *const dev_priv = dev->dev_private;
+
+	teardown_timer(&dev_priv->uncore.force_wake_timer);
+#endif
+}
+
 static const struct register_whitelist {
 	uint64_t offset;
 	uint32_t size;
@@ -917,8 +950,13 @@ int i915_get_reset_stats_ioctl(struct drm_device *dev,
 	if (args->flags || args->pad)
 		return -EINVAL;
 
+#ifdef __NetBSD__
+	if (args->ctx_id == DEFAULT_CONTEXT_ID && !DRM_SUSER())
+		return -EPERM;
+#else
 	if (args->ctx_id == DEFAULT_CONTEXT_ID && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
+#endif
 
 	ret = mutex_lock_interruptible(&dev->struct_mutex);
 	if (ret)
@@ -931,7 +969,11 @@ int i915_get_reset_stats_ioctl(struct drm_device *dev,
 	}
 	hs = &ctx->hang_stats;
 
+#ifdef __NetBSD__
+	if (DRM_SUSER())
+#else
 	if (capable(CAP_SYS_ADMIN))
+#endif
 		args->reset_count = i915_reset_count(&dev_priv->gpu_error);
 	else
 		args->reset_count = 0;

@@ -609,7 +609,7 @@ int ni_mc_load_microcode(struct radeon_device *rdev)
 {
 	const __be32 *fw_data;
 	u32 mem_type, running, blackout = 0;
-	u32 *io_mc_regs;
+	const u32 *io_mc_regs;
 	int i, ucode_size, regs_size;
 
 	if (!rdev->mc_fw)
@@ -617,23 +617,23 @@ int ni_mc_load_microcode(struct radeon_device *rdev)
 
 	switch (rdev->family) {
 	case CHIP_BARTS:
-		io_mc_regs = (u32 *)&barts_io_mc_regs;
+		io_mc_regs = &barts_io_mc_regs[0][0];
 		ucode_size = BTC_MC_UCODE_SIZE;
 		regs_size = BTC_IO_MC_REGS_SIZE;
 		break;
 	case CHIP_TURKS:
-		io_mc_regs = (u32 *)&turks_io_mc_regs;
+		io_mc_regs = &turks_io_mc_regs[0][0];
 		ucode_size = BTC_MC_UCODE_SIZE;
 		regs_size = BTC_IO_MC_REGS_SIZE;
 		break;
 	case CHIP_CAICOS:
 	default:
-		io_mc_regs = (u32 *)&caicos_io_mc_regs;
+		io_mc_regs = &caicos_io_mc_regs[0][0];
 		ucode_size = BTC_MC_UCODE_SIZE;
 		regs_size = BTC_IO_MC_REGS_SIZE;
 		break;
 	case CHIP_CAYMAN:
-		io_mc_regs = (u32 *)&cayman_io_mc_regs;
+		io_mc_regs = &cayman_io_mc_regs[0][0];
 		ucode_size = CAYMAN_MC_UCODE_SIZE;
 		regs_size = BTC_IO_MC_REGS_SIZE;
 		break;
@@ -700,7 +700,11 @@ int ni_init_microcode(struct radeon_device *rdev)
 		me_req_size = EVERGREEN_PM4_UCODE_SIZE * 4;
 		rlc_req_size = EVERGREEN_RLC_UCODE_SIZE * 4;
 		mc_req_size = BTC_MC_UCODE_SIZE * 4;
+#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
+		smc_req_size = round_up(BARTS_SMC_UCODE_SIZE, 4);
+#else
 		smc_req_size = ALIGN(BARTS_SMC_UCODE_SIZE, 4);
+#endif
 		break;
 	case CHIP_TURKS:
 		chip_name = "TURKS";
@@ -709,7 +713,11 @@ int ni_init_microcode(struct radeon_device *rdev)
 		me_req_size = EVERGREEN_PM4_UCODE_SIZE * 4;
 		rlc_req_size = EVERGREEN_RLC_UCODE_SIZE * 4;
 		mc_req_size = BTC_MC_UCODE_SIZE * 4;
+#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
+		smc_req_size = round_up(TURKS_SMC_UCODE_SIZE, 4);
+#else
 		smc_req_size = ALIGN(TURKS_SMC_UCODE_SIZE, 4);
+#endif
 		break;
 	case CHIP_CAICOS:
 		chip_name = "CAICOS";
@@ -718,7 +726,11 @@ int ni_init_microcode(struct radeon_device *rdev)
 		me_req_size = EVERGREEN_PM4_UCODE_SIZE * 4;
 		rlc_req_size = EVERGREEN_RLC_UCODE_SIZE * 4;
 		mc_req_size = BTC_MC_UCODE_SIZE * 4;
+#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
+		smc_req_size = round_up(CAICOS_SMC_UCODE_SIZE, 4);
+#else
 		smc_req_size = ALIGN(CAICOS_SMC_UCODE_SIZE, 4);
+#endif
 		break;
 	case CHIP_CAYMAN:
 		chip_name = "CAYMAN";
@@ -727,7 +739,11 @@ int ni_init_microcode(struct radeon_device *rdev)
 		me_req_size = CAYMAN_PM4_UCODE_SIZE * 4;
 		rlc_req_size = CAYMAN_RLC_UCODE_SIZE * 4;
 		mc_req_size = CAYMAN_MC_UCODE_SIZE * 4;
+#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
+		smc_req_size = round_up(CAYMAN_SMC_UCODE_SIZE, 4);
+#else
 		smc_req_size = ALIGN(CAYMAN_SMC_UCODE_SIZE, 4);
+#endif
 		break;
 	case CHIP_ARUBA:
 		chip_name = "ARUBA";
@@ -841,7 +857,7 @@ int tn_get_temp(struct radeon_device *rdev)
 static void cayman_gpu_init(struct radeon_device *rdev)
 {
 	u32 gb_addr_config = 0;
-	u32 mc_shared_chmap, mc_arb_ramcfg;
+	u32 mc_shared_chmap __unused, mc_arb_ramcfg;
 	u32 cgts_tcc_disable;
 	u32 sx_debug_1;
 	u32 smx_dc_ctl0;
@@ -2327,7 +2343,7 @@ void cayman_vm_decode_fault(struct radeon_device *rdev,
 	u32 mc_id = (status & MEMORY_CLIENT_ID_MASK) >> MEMORY_CLIENT_ID_SHIFT;
 	u32 vmid = (status & FAULT_VMID_MASK) >> FAULT_VMID_SHIFT;
 	u32 protections = (status & PROTECTIONS_MASK) >> PROTECTIONS_SHIFT;
-	char *block;
+	const char *block;
 
 	switch (mc_id) {
 	case 32:

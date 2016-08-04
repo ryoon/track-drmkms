@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_dispnv04_tvnv17.c,v 1.3 2014/08/23 08:03:34 riastradh Exp $	*/
+
 /*
  * Copyright (C) 2009 Francisco Jerez.
  * All Rights Reserved.
@@ -23,6 +25,9 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_dispnv04_tvnv17.c,v 1.3 2014/08/23 08:03:34 riastradh Exp $");
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
@@ -213,7 +218,7 @@ nv17_tv_detect(struct drm_encoder *encoder, struct drm_connector *connector)
 static int nv17_tv_get_ld_modes(struct drm_encoder *encoder,
 				struct drm_connector *connector)
 {
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 	const struct drm_display_mode *tv_mode;
 	int n = 0;
 
@@ -243,8 +248,8 @@ static int nv17_tv_get_ld_modes(struct drm_encoder *encoder,
 static int nv17_tv_get_hd_modes(struct drm_encoder *encoder,
 				struct drm_connector *connector)
 {
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
-	struct drm_display_mode *output_mode = &tv_norm->ctv_enc_mode.mode;
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct drm_display_mode *output_mode = &tv_norm->ctv_enc_mode.mode;
 	struct drm_display_mode *mode;
 	const struct {
 		int hdisplay;
@@ -305,7 +310,7 @@ static int nv17_tv_get_hd_modes(struct drm_encoder *encoder,
 static int nv17_tv_get_modes(struct drm_encoder *encoder,
 			     struct drm_connector *connector)
 {
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 
 	if (tv_norm->kind == CTV_ENC_MODE)
 		return nv17_tv_get_hd_modes(encoder, connector);
@@ -316,10 +321,10 @@ static int nv17_tv_get_modes(struct drm_encoder *encoder,
 static int nv17_tv_mode_valid(struct drm_encoder *encoder,
 			      struct drm_display_mode *mode)
 {
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 
 	if (tv_norm->kind == CTV_ENC_MODE) {
-		struct drm_display_mode *output_mode =
+		const struct drm_display_mode *output_mode =
 						&tv_norm->ctv_enc_mode.mode;
 
 		if (mode->clock > 400000)
@@ -358,7 +363,7 @@ static bool nv17_tv_mode_fixup(struct drm_encoder *encoder,
 			       const struct drm_display_mode *mode,
 			       struct drm_display_mode *adjusted_mode)
 {
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 
 	if (nv04_dac_in_use(encoder))
 		return false;
@@ -377,7 +382,7 @@ static void  nv17_tv_dpms(struct drm_encoder *encoder, int mode)
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nouveau_gpio *gpio = nouveau_gpio(drm->device);
 	struct nv17_tv_state *regs = &to_tv_enc(encoder)->state;
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 
 	if (nouveau_encoder(encoder)->last_dpms == mode)
 		return;
@@ -411,7 +416,7 @@ static void nv17_tv_prepare(struct drm_encoder *encoder)
 	struct drm_device *dev = encoder->dev;
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct drm_encoder_helper_funcs *helper = encoder->helper_private;
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 	int head = nouveau_crtc(encoder->crtc)->index;
 	uint8_t *cr_lcd = &nv04_display(dev)->mode_reg.crtc_reg[head].CRTC[
 							NV_CIO_CRE_LCD__INDEX];
@@ -476,7 +481,7 @@ static void nv17_tv_mode_set(struct drm_encoder *encoder,
 	int head = nouveau_crtc(encoder->crtc)->index;
 	struct nv04_crtc_reg *regs = &nv04_display(dev)->mode_reg.crtc_reg[head];
 	struct nv17_tv_state *tv_regs = &to_tv_enc(encoder)->state;
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 	int i;
 
 	regs->CRTC[NV_CIO_CRE_53] = 0x40; /* FP_HTIMING */
@@ -529,7 +534,7 @@ static void nv17_tv_mode_set(struct drm_encoder *encoder,
 			tv_regs->tv_enc[i] = tv_norm->tv_enc_mode.tv_enc[i];
 
 	} else {
-		struct drm_display_mode *output_mode =
+		const struct drm_display_mode *output_mode =
 						&tv_norm->ctv_enc_mode.mode;
 
 		/* The registers in PRAMDAC+0xc00 control some timings and CSC
@@ -705,7 +710,7 @@ static int nv17_tv_set_property(struct drm_encoder *encoder,
 	struct drm_mode_config *conf = &encoder->dev->mode_config;
 	struct drm_crtc *crtc = encoder->crtc;
 	struct nv17_tv_encoder *tv_enc = to_tv_enc(encoder);
-	struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
+	const struct nv17_tv_norm_params *tv_norm = get_tv_norm(encoder);
 	bool modes_changed = false;
 
 	if (property == conf->tv_overscan_property) {

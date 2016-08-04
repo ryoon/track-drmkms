@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_ttm.c,v 1.4 2015/04/03 01:09:42 riastradh Exp $	*/
+
 /*
  * Copyright (c) 2007-2008 Tungsten Graphics, Inc., Cedar Park, TX., USA,
  * All Rights Reserved.
@@ -23,6 +25,9 @@
  * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_ttm.c,v 1.4 2015/04/03 01:09:42 riastradh Exp $");
 
 #include <subdev/fb.h>
 #include <subdev/vm.h>
@@ -113,7 +118,7 @@ nouveau_vram_manager_debug(struct ttm_mem_type_manager *man, const char *prefix)
 
 	mutex_lock(&nv_subdev(pfb)->mutex);
 	list_for_each_entry(r, &mm->nodes, nl_entry) {
-		printk(KERN_DEBUG "%s %d: 0x%010llx 0x%010llx\n",
+		printk(KERN_DEBUG "%s %d: 0x%010"PRIx64" 0x%010"PRIx64"\n",
 		       prefix, r->type, ((u64)r->offset << 12),
 		       (((u64)r->offset + r->length) << 12));
 
@@ -123,7 +128,7 @@ nouveau_vram_manager_debug(struct ttm_mem_type_manager *man, const char *prefix)
 	}
 	mutex_unlock(&nv_subdev(pfb)->mutex);
 
-	printk(KERN_DEBUG "%s  total: 0x%010llx free: 0x%010llx\n",
+	printk(KERN_DEBUG "%s  total: 0x%010"PRIx64" free: 0x%010"PRIx64"\n",
 	       prefix, (u64)total << 12, (u64)free << 12);
 	printk(KERN_DEBUG "%s  block: 0x%08x\n",
 	       prefix, mm->block_size << 12);
@@ -278,6 +283,27 @@ const struct ttm_mem_type_manager_func nv04_gart_manager = {
 	nv04_gart_manager_debug
 };
 
+#ifdef __NetBSD__
+
+int
+nouveau_ttm_mmap_object(struct drm_device *dev, off_t offset, size_t size,
+    vm_prot_t prot, struct uvm_object **uobjp, voff_t *uoffsetp,
+    struct file *file)
+{
+	struct nouveau_drm *const drm = nouveau_drm(dev);
+
+	KASSERT(0 == (offset & (PAGE_SIZE - 1)));
+
+	if (__predict_false((offset >> PAGE_SHIFT) < DRM_FILE_PAGE_OFFSET))
+		return drm_mmap_object(dev, offset, size, prot, uobjp,
+		    uoffsetp, file);
+	else
+		return ttm_bo_mmap_object(&drm->ttm.bdev, offset, size, prot,
+		    uobjp, uoffsetp, file);
+}
+
+#else
+
 int
 nouveau_ttm_mmap(struct file *filp, struct vm_area_struct *vma)
 {
@@ -289,6 +315,8 @@ nouveau_ttm_mmap(struct file *filp, struct vm_area_struct *vma)
 
 	return ttm_bo_mmap(filp, vma, &drm->ttm.bdev);
 }
+
+#endif
 
 static int
 nouveau_ttm_mem_global_init(struct drm_global_reference *ref)
@@ -364,6 +392,11 @@ nouveau_ttm_init(struct nouveau_drm *drm)
 		     !pci_dma_supported(dev->pdev, DMA_BIT_MASK(bits)))
 			bits = 32;
 
+#ifdef __NetBSD__
+		ret = drm_limit_dma_space(dev, 0, DMA_BIT_MASK(bits));
+		if (ret)
+			return ret;
+#else
 		ret = pci_set_dma_mask(dev->pdev, DMA_BIT_MASK(bits));
 		if (ret)
 			return ret;
@@ -373,6 +406,7 @@ nouveau_ttm_init(struct nouveau_drm *drm)
 		if (ret)
 			pci_set_consistent_dma_mask(dev->pdev,
 						    DMA_BIT_MASK(32));
+#endif
 	}
 
 	ret = nouveau_ttm_global_init(drm);
@@ -382,7 +416,12 @@ nouveau_ttm_init(struct nouveau_drm *drm)
 	ret = ttm_bo_device_init(&drm->ttm.bdev,
 				  drm->ttm.bo_global_ref.ref.object,
 				  &nouveau_bo_driver,
+#ifdef __NetBSD__
+				  dev->bst,
+				  dev->dmat,
+#else
 				  dev->anon_inode->i_mapping,
+#endif
 				  DRM_FILE_PAGE_OFFSET,
 				  bits <= 32 ? true : false);
 	if (ret) {
@@ -403,6 +442,11 @@ nouveau_ttm_init(struct nouveau_drm *drm)
 
 	drm->ttm.mtrr = arch_phys_wc_add(nv_device_resource_start(device, 1),
 					 nv_device_resource_len(device, 1));
+
+#ifdef __NetBSD__
+	pmap_pv_track(nv_device_resource_start(device, 1),
+	    nv_device_resource_len(device, 1));
+#endif
 
 	/* GART init */
 	if (drm->agp.stat != ENABLED) {
@@ -437,4 +481,9 @@ nouveau_ttm_fini(struct nouveau_drm *drm)
 
 	arch_phys_wc_del(drm->ttm.mtrr);
 	drm->ttm.mtrr = 0;
+
+#ifdef __NetBSD__
+	pmap_pv_untrack(nv_device_resource_start(nv_device(drm->device), 1),
+	    nv_device_resource_len(nv_device(drm->device), 1));
+#endif
 }

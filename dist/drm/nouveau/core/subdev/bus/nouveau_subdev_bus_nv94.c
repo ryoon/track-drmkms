@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_bus_nv94.c,v 1.1.1.1 2014/08/06 12:36:29 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Nouveau Community
  *
@@ -22,6 +24,9 @@
  * Authors: Martin Peres <martin.peres@labri.fr>
  *          Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_bus_nv94.c,v 1.1.1.1 2014/08/06 12:36:29 riastradh Exp $");
 
 #include <subdev/timer.h>
 

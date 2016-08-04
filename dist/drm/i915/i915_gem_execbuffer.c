@@ -32,6 +32,9 @@
 #include "i915_trace.h"
 #include "intel_drv.h"
 #include <linux/dma_remapping.h>
+#include <linux/log2.h>
+#include <linux/pagemap.h>
+#include <linux/err.h>
 
 #define  __EXEC_OBJECT_HAS_PIN (1<<31)
 #define  __EXEC_OBJECT_HAS_FENCE (1<<30)
@@ -104,7 +107,8 @@ eb_lookup_vmas(struct eb_vmas *eb,
 	/* Grab a reference to the object and release the lock so we can lookup
 	 * or create the VMA without using GFP_ATOMIC */
 	for (i = 0; i < args->buffer_count; i++) {
-		obj = to_intel_bo(idr_find(&file->object_idr, exec[i].handle));
+		obj = to_intel_bo((struct drm_gem_object *)
+		    idr_find(&file->object_idr, exec[i].handle));
 		if (obj == NULL) {
 			spin_unlock(&file->table_lock);
 			DRM_DEBUG("Invalid object handle %d at index %d\n",
@@ -263,6 +267,19 @@ static inline int use_cpu_reloc(struct drm_i915_gem_object *obj)
 		obj->cache_level != I915_CACHE_NONE);
 }
 
+#ifdef __NetBSD__
+#  define	__gtt_iomem
+#  define	__iomem	__gtt_iomem
+
+static inline void
+iowrite32(uint32_t value, uint32_t __gtt_iomem *ptr)
+{
+
+	__insn_barrier();
+	*ptr = value;
+}
+#endif
+
 static int
 relocate_entry_cpu(struct drm_i915_gem_object *obj,
 		   struct drm_i915_gem_relocation_entry *reloc)
@@ -320,14 +337,19 @@ relocate_entry_gtt(struct drm_i915_gem_object *obj,
 	reloc_page = io_mapping_map_atomic_wc(dev_priv->gtt.mappable,
 			reloc->offset & PAGE_MASK);
 	reloc_entry = (uint32_t __iomem *)
-		(reloc_page + offset_in_page(reloc->offset));
+		((char __iomem *)reloc_page + offset_in_page(reloc->offset));
 	iowrite32(reloc->delta, reloc_entry);
 
 	if (INTEL_INFO(dev)->gen >= 8) {
 		reloc_entry += 1;
 
 		if (offset_in_page(reloc->offset + sizeof(uint32_t)) == 0) {
+#ifdef __NetBSD__
+			io_mapping_unmap_atomic(dev_priv->gtt.mappable,
+			    reloc_page);
+#else
 			io_mapping_unmap_atomic(reloc_page);
+#endif
 			reloc_page = io_mapping_map_atomic_wc(
 					dev_priv->gtt.mappable,
 					reloc->offset + sizeof(uint32_t));
@@ -337,10 +359,20 @@ relocate_entry_gtt(struct drm_i915_gem_object *obj,
 		iowrite32(0, reloc_entry);
 	}
 
+#ifdef __NetBSD__
+	io_mapping_unmap_atomic(dev_priv->gtt.mappable,
+	    reloc_page);
+#else
 	io_mapping_unmap_atomic(reloc_page);
+#endif
 
 	return 0;
 }
+
+#ifdef __NetBSD__
+#  undef	__gtt_iomem
+#  undef	__iomem
+#endif
 
 static int
 i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
@@ -425,9 +457,11 @@ i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
 		return -EINVAL;
 	}
 
+#ifndef __NetBSD__              /* XXX atomic GEM reloc fast path */
 	/* We can't wait for rendering with pagefaults disabled */
 	if (obj->active && in_atomic())
 		return -EFAULT;
+#endif
 
 	reloc->delta += target_offset;
 	if (use_cpu_reloc(obj))
@@ -444,6 +478,7 @@ i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
 	return 0;
 }
 
+#ifndef __NetBSD__              /* XXX atomic GEM reloc fast path */
 static int
 i915_gem_execbuffer_relocate_vma(struct i915_vma *vma,
 				 struct eb_vmas *eb)
@@ -489,6 +524,7 @@ i915_gem_execbuffer_relocate_vma(struct i915_vma *vma,
 	return 0;
 #undef N_RELOC
 }
+#endif
 
 static int
 i915_gem_execbuffer_relocate_vma_slow(struct i915_vma *vma,
@@ -510,9 +546,15 @@ i915_gem_execbuffer_relocate_vma_slow(struct i915_vma *vma,
 static int
 i915_gem_execbuffer_relocate(struct eb_vmas *eb)
 {
+#ifndef __NetBSD__
+	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
+#endif
 	int ret = 0;
 
+#ifdef __NetBSD__              /* XXX atomic GEM reloc fast path */
+        ret = -EFAULT;
+#else
 	/* This is the fast path and we cannot handle a pagefault whilst
 	 * holding the struct mutex lest the user pass in the relocations
 	 * contained within a mmaped bo. For in such a case we, the page
@@ -527,6 +569,7 @@ i915_gem_execbuffer_relocate(struct eb_vmas *eb)
 			break;
 	}
 	pagefault_enable();
+#endif
 
 	return ret;
 }
@@ -1065,8 +1108,13 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
 
 	flags = 0;
 	if (args->flags & I915_EXEC_SECURE) {
+#ifdef __NetBSD__
+		if (!file->is_master || !DRM_SUSER())
+		    return -EPERM;
+#else
 		if (!file->is_master || !capable(CAP_SYS_ADMIN))
 		    return -EPERM;
+#endif
 
 		flags |= I915_DISPATCH_SECURE;
 	}

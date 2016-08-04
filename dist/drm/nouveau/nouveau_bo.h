@@ -1,8 +1,12 @@
 #ifndef __NOUVEAU_BO_H__
 #define __NOUVEAU_BO_H__
 
+#include <ttm/ttm_bo_api.h>
+
 struct nouveau_channel;
+struct nouveau_drm;
 struct nouveau_fence;
+struct nouveau_vm;
 struct nouveau_vma;
 
 struct nouveau_bo {
@@ -89,6 +93,11 @@ int  nouveau_bo_vma_add(struct nouveau_bo *, struct nouveau_vm *,
 			struct nouveau_vma *);
 void nouveau_bo_vma_del(struct nouveau_bo *, struct nouveau_vma *);
 
+#ifdef __NetBSD__
+#  define	__iomem	volatile
+#  define	__force
+#endif
+
 /* TODO: submit equivalent to TTM generic API upstream? */
 static inline void __iomem *
 nvbo_kmap_obj_iovirtual(struct nouveau_bo *nvbo)
@@ -99,5 +108,10 @@ nvbo_kmap_obj_iovirtual(struct nouveau_bo *nvbo)
 	WARN_ON_ONCE(ioptr && !is_iomem);
 	return ioptr;
 }
+
+#ifdef __NetBSD__
+#  undef	__iomem
+#  undef	__force
+#endif
 
 #endif

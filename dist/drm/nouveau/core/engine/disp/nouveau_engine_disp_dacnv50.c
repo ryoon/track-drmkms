@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_disp_dacnv50.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_disp_dacnv50.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $");
 
 #include <core/os.h>
 #include <core/class.h>
@@ -92,6 +97,7 @@ nv50_dac_mthd(struct nouveau_object *object, u32 mthd, void *args, u32 size)
 		break;
 	default:
 		BUG_ON(1);
+		ret = -EIO;	/* XXX GCC */
 	}
 
 	return ret;

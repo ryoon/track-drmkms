@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_core_object.c,v 1.3 2015/10/18 14:49:24 jmcneill Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -22,6 +24,9 @@
  * Authors: Ben Skeggs
  */
 
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_core_object.c,v 1.3 2015/10/18 14:49:24 jmcneill Exp $");
+
 #include <core/object.h>
 #include <core/parent.h>
 #include <core/namedb.h>
@@ -30,7 +35,31 @@
 
 #ifdef NOUVEAU_OBJECT_MAGIC
 static struct list_head _objlist = LIST_HEAD_INIT(_objlist);
+#ifdef __NetBSD__
+static spinlock_t _objlist_lock;
+#else
 static DEFINE_SPINLOCK(_objlist_lock);
+#endif
+#endif
+
+#ifdef __NetBSD__
+void
+nouveau_objects_init(void)
+{
+
+#ifdef NOUVEAU_OBJECT_MAGIC
+	spin_lock_init(&_objlist_lock);
+#endif
+}
+
+void
+nouveau_objects_fini(void)
+{
+
+#ifdef NOUVEAU_OBJECT_MAGIC
+	spin_lock_destroy(&_objlist_lock);
+#endif
+}
 #endif
 
 int

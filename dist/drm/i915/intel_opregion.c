@@ -27,13 +27,17 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/printk.h>
 #include <linux/acpi.h>
 #include <acpi/video.h>
+#include <asm/io.h>
 
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 #include "intel_drv.h"
+
+#ifdef CONFIG_ACPI
 
 #define PCI_ASLE		0xe4
 #define PCI_ASLS		0xfc
@@ -53,6 +57,27 @@
 #define MBOX_ACPI      (1<<0)
 #define MBOX_SWSCI     (1<<1)
 #define MBOX_ASLE      (1<<2)
+
+#ifdef __NetBSD__		/* XXX acpi iomem */
+#  define	__iomem	__acpi_iomem
+
+static inline uint32_t
+ioread32(const uint32_t __acpi_iomem *ptr)
+{
+	const uint32_t value = *ptr;
+
+	__insn_barrier();
+	return value;
+}
+
+static inline void
+iowrite32(uint32_t value, uint32_t __acpi_iomem *ptr)
+{
+
+	__insn_barrier();
+	*ptr = value;
+}
+#endif
 
 struct opregion_header {
 	u8 signature[16];
@@ -232,12 +257,12 @@ struct opregion_asle {
 static int swsci(struct drm_device *dev, u32 function, u32 parm, u32 *parm_out)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	struct opregion_swsci __iomem *swsci = dev_priv->opregion.swsci;
+	struct opregion_swsci __iomem *region_swsci = dev_priv->opregion.swsci;
 	u32 main_function, sub_function, scic;
 	u16 pci_swsci;
 	u32 dslp;
 
-	if (!swsci)
+	if (!region_swsci)
 		return -ENODEV;
 
 	main_function = (function & SWSCI_SCIC_MAIN_FUNCTION_MASK) >>
@@ -257,7 +282,7 @@ static int swsci(struct drm_device *dev, u32 function, u32 parm, u32 *parm_out)
 	}
 
 	/* Driver sleep timeout in ms. */
-	dslp = ioread32(&swsci->dslp);
+	dslp = ioread32(&region_swsci->dslp);
 	if (!dslp) {
 		/* The spec says 2ms should be the default, but it's too small
 		 * for some machines. */
@@ -270,7 +295,7 @@ static int swsci(struct drm_device *dev, u32 function, u32 parm, u32 *parm_out)
 	}
 
 	/* The spec tells us to do this, but we are the only user... */
-	scic = ioread32(&swsci->scic);
+	scic = ioread32(&region_swsci->scic);
 	if (scic & SWSCI_SCIC_INDICATOR) {
 		DRM_DEBUG_DRIVER("SWSCI request already in progress\n");
 		return -EBUSY;
@@ -278,8 +303,8 @@ static int swsci(struct drm_device *dev, u32 function, u32 parm, u32 *parm_out)
 
 	scic = function | SWSCI_SCIC_INDICATOR;
 
-	iowrite32(parm, &swsci->parm);
-	iowrite32(scic, &swsci->scic);
+	iowrite32(parm, &region_swsci->parm);
+	iowrite32(scic, &region_swsci->scic);
 
 	/* Ensure SCI event is selected and event trigger is cleared. */
 	pci_read_config_word(dev->pdev, PCI_SWSCI, &pci_swsci);
@@ -294,7 +319,7 @@ static int swsci(struct drm_device *dev, u32 function, u32 parm, u32 *parm_out)
 	pci_write_config_word(dev->pdev, PCI_SWSCI, pci_swsci);
 
 	/* Poll for the result. */
-#define C (((scic = ioread32(&swsci->scic)) & SWSCI_SCIC_INDICATOR) == 0)
+#define C (((scic = ioread32(&region_swsci->scic)) & SWSCI_SCIC_INDICATOR) == 0)
 	if (wait_for(C, dslp)) {
 		DRM_DEBUG_DRIVER("SWSCI request timed out\n");
 		return -ETIMEDOUT;
@@ -310,7 +335,7 @@ static int swsci(struct drm_device *dev, u32 function, u32 parm, u32 *parm_out)
 	}
 
 	if (parm_out)
-		*parm_out = ioread32(&swsci->parm);
+		*parm_out = ioread32(&region_swsci->parm);
 
 	return 0;
 
@@ -566,6 +591,29 @@ void intel_opregion_asle_intr(struct drm_device *dev)
 
 static struct intel_opregion *system_opregion;
 
+#ifdef __NetBSD__
+static void
+intel_opregion_video_event(ACPI_HANDLE hdl, uint32_t notify, void *opaque)
+{
+	device_t self = opaque;
+	struct opregion_acpi __iomem *acpi;
+
+	DRM_DEBUG_DRIVER("notify=0x%08x\n", notify);
+
+	if (!system_opregion)
+		return;
+
+	acpi = system_opregion->acpi;
+
+	if (notify != 0x80) {
+		aprint_error_dev(self, "unknown notify 0x%02x\n", notify);
+	} else if ((ioread32(&acpi->cevt) & 1) == 0) {
+		aprint_error_dev(self, "bad notify\n");
+	}
+
+	iowrite32(0, &acpi->csts);
+}
+#else	/* !__NetBSD__ */
 static int intel_opregion_video_event(struct notifier_block *nb,
 				      unsigned long val, void *data)
 {
@@ -598,6 +646,7 @@ static int intel_opregion_video_event(struct notifier_block *nb,
 static struct notifier_block intel_opregion_notifier = {
 	.notifier_call = intel_opregion_video_event,
 };
+#endif	/* __NetBSD__ */
 
 /*
  * Initialise the DIDL field in opregion. This passes a list of devices to
@@ -610,13 +659,26 @@ static void intel_didl_outputs(struct drm_device *dev)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_opregion *opregion = &dev_priv->opregion;
 	struct drm_connector *connector;
+#ifdef __NetBSD__
+	struct acpi_devnode *ad, *child;
+	ACPI_INTEGER device_id;
+	ACPI_STATUS status;
+#else
 	acpi_handle handle;
 	struct acpi_device *acpi_dev, *acpi_cdev, *acpi_video_bus = NULL;
 	unsigned long long device_id;
 	acpi_status status;
+#endif
 	u32 temp;
 	int i = 0;
 
+#ifdef __NetBSD__
+	ad = dev->pdev->pd_ad;
+	if (ad == NULL ||
+	    ad->ad_device == NULL ||
+	    !device_is_a(ad->ad_device, "acpivga"))
+		return;
+#else
 	handle = ACPI_HANDLE(&dev->pdev->dev);
 	if (!handle || acpi_bus_get_device(handle, &acpi_dev))
 		return;
@@ -636,16 +698,29 @@ static void intel_didl_outputs(struct drm_device *dev)
 		pr_warn("No ACPI video bus found\n");
 		return;
 	}
+#endif
 
+#ifdef __NetBSD__
+	SIMPLEQ_FOREACH(child, &ad->ad_child_head, ad_child_list) {
+#else
 	list_for_each_entry(acpi_cdev, &acpi_video_bus->children, node) {
+#endif
 		if (i >= 8) {
+#ifdef __NetBSD__
+			aprint_error_dev(dev->pdev->pd_dev,
+#else
 			dev_dbg(&dev->pdev->dev,
+#endif
 				"More than 8 outputs detected via ACPI\n");
 			return;
 		}
 		status =
+#ifdef __NetBSD__
+			acpi_eval_integer(child->ad_handle, "_ADR", &device_id);
+#else
 			acpi_evaluate_integer(acpi_cdev->handle, "_ADR",
 						NULL, &device_id);
+#endif
 		if (ACPI_SUCCESS(status)) {
 			if (!device_id)
 				goto blind_set;
@@ -666,7 +741,11 @@ blind_set:
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
 		int output_type = ACPI_OTHER_OUTPUT;
 		if (i >= 8) {
+#ifdef __NetBSD__
+			aprint_error_dev(dev->pdev->pd_dev,
+#else
 			dev_dbg(&dev->pdev->dev,
+#endif
 				"More than 8 outputs in connector list\n");
 			return;
 		}
@@ -740,7 +819,13 @@ void intel_opregion_init(struct drm_device *dev)
 		iowrite32(1, &opregion->acpi->drdy);
 
 		system_opregion = opregion;
+#ifdef __NetBSD__
+		if (dev->pdev->pd_ad != NULL)
+			acpi_register_notify(dev->pdev->pd_ad,
+			    intel_opregion_video_event);
+#else
 		register_acpi_notifier(&intel_opregion_notifier);
+#endif
 	}
 
 	if (opregion->asle) {
@@ -766,11 +851,20 @@ void intel_opregion_fini(struct drm_device *dev)
 		iowrite32(0, &opregion->acpi->drdy);
 
 		system_opregion = NULL;
+#ifdef __NetBSD__
+		if (dev->pdev->pd_ad != NULL)
+			acpi_deregister_notify(dev->pdev->pd_ad);
+#else
 		unregister_acpi_notifier(&intel_opregion_notifier);
+#endif
 	}
 
 	/* just clear all opregion memory pointers now */
+#ifdef __NetBSD__
+	acpi_os_iounmap(opregion->header, OPREGION_SIZE);
+#else
 	iounmap(opregion->header);
+#endif
 	opregion->header = NULL;
 	opregion->acpi = NULL;
 	opregion->swsci = NULL;
@@ -871,24 +965,24 @@ int intel_opregion_setup(struct drm_device *dev)
 		goto err_out;
 	}
 	opregion->header = base;
-	opregion->vbt = base + OPREGION_VBT_OFFSET;
+	opregion->vbt = (char *)base + OPREGION_VBT_OFFSET;
 
-	opregion->lid_state = base + ACPI_CLID;
+	opregion->lid_state = (void *)((char *)base + ACPI_CLID);
 
 	mboxes = ioread32(&opregion->header->mboxes);
 	if (mboxes & MBOX_ACPI) {
 		DRM_DEBUG_DRIVER("Public ACPI methods supported\n");
-		opregion->acpi = base + OPREGION_ACPI_OFFSET;
+		opregion->acpi = (void *)((char *)base + OPREGION_ACPI_OFFSET);
 	}
 
 	if (mboxes & MBOX_SWSCI) {
 		DRM_DEBUG_DRIVER("SWSCI supported\n");
-		opregion->swsci = base + OPREGION_SWSCI_OFFSET;
+		opregion->swsci = (void *)((char *)base + OPREGION_SWSCI_OFFSET);
 		swsci_setup(dev);
 	}
 	if (mboxes & MBOX_ASLE) {
 		DRM_DEBUG_DRIVER("ASLE supported\n");
-		opregion->asle = base + OPREGION_ASLE_OFFSET;
+		opregion->asle = (void *)((char *)base + OPREGION_ASLE_OFFSET);
 
 		iowrite32(ASLE_ARDY_NOT_READY, &opregion->asle->ardy);
 	}
@@ -896,6 +990,12 @@ int intel_opregion_setup(struct drm_device *dev)
 	return 0;
 
 err_out:
+#ifdef __NetBSD__
+	acpi_os_iounmap(base, OPREGION_SIZE);
+#else
 	iounmap(base);
+#endif
 	return err;
 }
+
+#endif	/* CONFIG_ACPI */

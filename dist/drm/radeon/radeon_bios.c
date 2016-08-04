@@ -33,6 +33,7 @@
 #include <linux/vga_switcheroo.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
+#include <linux/string.h>
 /*
  * BIOS.
  */
@@ -45,15 +46,39 @@
  */
 static bool igp_read_bios_from_vram(struct radeon_device *rdev)
 {
+#ifdef __NetBSD__
+	bus_space_tag_t bst;
+	bus_space_handle_t bsh;
+	bus_size_t size;
+#else
 	uint8_t __iomem *bios;
 	resource_size_t vram_base;
 	resource_size_t size = 256 * 1024; /* ??? */
+#endif
 
 	if (!(rdev->flags & RADEON_IS_IGP))
 		if (!radeon_card_posted(rdev))
 			return false;
 
 	rdev->bios = NULL;
+#ifdef __NetBSD__
+	if (pci_mapreg_map(&rdev->pdev->pd_pa, PCI_BAR(0),
+		/* XXX Dunno what type to expect here; fill me in...  */
+		pci_mapreg_type(rdev->pdev->pd_pa.pa_pc,
+		    rdev->pdev->pd_pa.pa_tag, PCI_BAR(0)),
+		0, &bst, &bsh, NULL, &size))
+		return false;
+	if ((size == 0) ||
+	    (size < 256 * 1024) ||
+	    (bus_space_read_1(bst, bsh, 0) != 0x55) ||
+	    (bus_space_read_1(bst, bsh, 1) != 0xaa) ||
+	    ((rdev->bios = kmalloc(size, GFP_KERNEL)) == NULL)) {
+		bus_space_unmap(bst, bsh, size);
+		return false;
+	}
+	bus_space_read_region_1(bst, bsh, 0, rdev->bios, size);
+	bus_space_unmap(bst, bsh, size);
+#else
 	vram_base = pci_resource_start(rdev->pdev, 0);
 	bios = ioremap(vram_base, size);
 	if (!bios) {
@@ -71,8 +96,13 @@ static bool igp_read_bios_from_vram(struct radeon_device *rdev)
 	}
 	memcpy_fromio(rdev->bios, bios, size);
 	iounmap(bios);
+#endif
 	return true;
 }
+
+#ifdef __NetBSD__
+#define	__iomem	__pci_rom_iomem
+#endif
 
 static bool radeon_read_bios(struct radeon_device *rdev)
 {
@@ -86,6 +116,31 @@ static bool radeon_read_bios(struct radeon_device *rdev)
 		return false;
 	}
 
+#ifdef __NetBSD__
+	/*
+	 * Using kmemdup results in >4-byte memory access on 64-bit
+	 * systems, which yields bogus answers on some devices.  So we
+	 * use bus_space(9) to do guaranteed byte access with
+	 * bus_space_read_region_1 which seems to work better.
+	 */
+    {
+	const bus_space_tag_t bst = rdev->pdev->pd_rom_bst;
+	const bus_space_handle_t bsh = rdev->pdev->pd_rom_found_bsh;
+
+	if (size == 0 ||
+	    bus_space_read_1(bst, bsh, 0) != 0x55 ||
+	    bus_space_read_1(bst, bsh, 1) != 0xaa) {
+		pci_unmap_rom(rdev->pdev, bios);
+		return false;
+	}
+	rdev->bios = kmalloc(size, GFP_KERNEL);
+	if (rdev->bios == NULL) {
+		pci_unmap_rom(rdev->pdev, bios);
+		return false;
+	}
+	bus_space_read_region_1(bst, bsh, 0, rdev->bios, size);
+    }
+#else
 	if (size == 0 || bios[0] != 0x55 || bios[1] != 0xaa) {
 		pci_unmap_rom(rdev->pdev, bios);
 		return false;
@@ -95,12 +150,20 @@ static bool radeon_read_bios(struct radeon_device *rdev)
 		pci_unmap_rom(rdev->pdev, bios);
 		return false;
 	}
+#endif
 	pci_unmap_rom(rdev->pdev, bios);
 	return true;
 }
 
+#ifdef __NetBSD__
+#undef	__iomem
+#endif
+
 static bool radeon_read_platform_bios(struct radeon_device *rdev)
 {
+#ifdef __NetBSD__		/* XXX radeon platform bios */
+	return false;
+#else
 	uint8_t __iomem *bios;
 	size_t size;
 
@@ -120,8 +183,10 @@ static bool radeon_read_platform_bios(struct radeon_device *rdev)
 	}
 
 	return true;
+#endif
 }
 
+/* XXX radeon acpi */
 #ifdef CONFIG_ACPI
 /* ATRM is used to get the BIOS on the discrete cards in
  * dual-gpu systems.

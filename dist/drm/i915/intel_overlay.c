@@ -25,6 +25,8 @@
  *
  * Derived from Xorg ddx, xf86-video-intel, src/i830_video.c
  */
+#include <linux/kernel.h>
+#include <asm/io.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
@@ -167,6 +169,19 @@ struct overlay_registers {
 	u16 RESERVEDG[0x100 / 2 - N_HORIZ_UV_TAPS * N_PHASES];
 };
 
+#ifdef __NetBSD__		/* XXX intel overlay iomem */
+#  define	__intel_overlay_iomem
+#  define	__iomem			__intel_overlay_iomem
+
+static inline void
+iowrite32(uint32_t value, uint32_t __intel_overlay_iomem *ptr)
+{
+
+	__insn_barrier();
+	*ptr = value;
+}
+#endif
+
 struct intel_overlay {
 	struct drm_device *dev;
 	struct intel_crtc *crtc;
@@ -204,8 +219,15 @@ intel_overlay_map_regs(struct intel_overlay *overlay)
 static void intel_overlay_unmap_regs(struct intel_overlay *overlay,
 				     struct overlay_registers __iomem *regs)
 {
+#ifdef __NetBSD__		/* XXX io mapping */
+	struct drm_i915_private *dev_priv = overlay->dev->dev_private;
+
+	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
+		io_mapping_unmap(dev_priv->gtt.mappable, regs);
+#else
 	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
 		io_mapping_unmap(regs);
+#endif
 }
 
 static int intel_overlay_do_wait_request(struct intel_overlay *overlay,
@@ -684,7 +706,7 @@ static int intel_overlay_do_put_image(struct intel_overlay *overlay,
 	int ret, tmp_width;
 	struct overlay_registers __iomem *regs;
 	bool scale_changed = false;
-	struct drm_device *dev = overlay->dev;
+	struct drm_device *dev __diagused = overlay->dev;
 	u32 swidth, swidthsw, sheight, ostride;
 
 	BUG_ON(!mutex_is_locked(&dev->struct_mutex));
@@ -789,7 +811,7 @@ out_unpin:
 int intel_overlay_switch_off(struct intel_overlay *overlay)
 {
 	struct overlay_registers __iomem *regs;
-	struct drm_device *dev = overlay->dev;
+	struct drm_device *dev __diagused = overlay->dev;
 	int ret;
 
 	BUG_ON(!mutex_is_locked(&dev->struct_mutex));
@@ -1030,6 +1052,7 @@ int intel_overlay_put_image(struct drm_device *dev, void *data,
 	struct intel_overlay *overlay;
 	struct drm_mode_object *drmmode_obj;
 	struct intel_crtc *crtc;
+	struct drm_gem_object *new_gbo;
 	struct drm_i915_gem_object *new_bo;
 	struct put_image_params *params;
 	int ret;
@@ -1065,12 +1088,13 @@ int intel_overlay_put_image(struct drm_device *dev, void *data,
 	}
 	crtc = to_intel_crtc(obj_to_crtc(drmmode_obj));
 
-	new_bo = to_intel_bo(drm_gem_object_lookup(dev, file_priv,
-						   put_image_rec->bo_handle));
-	if (&new_bo->base == NULL) {
+	new_gbo = drm_gem_object_lookup(dev, file_priv,
+	    put_image_rec->bo_handle);
+	if (new_gbo == NULL) {
 		ret = -ENOENT;
 		goto out_free;
 	}
+	new_bo = to_intel_bo(new_gbo);
 
 	drm_modeset_lock_all(dev);
 	mutex_lock(&dev->struct_mutex);
@@ -1437,8 +1461,15 @@ intel_overlay_map_regs_atomic(struct intel_overlay *overlay)
 static void intel_overlay_unmap_regs_atomic(struct intel_overlay *overlay,
 					struct overlay_registers __iomem *regs)
 {
+#ifdef __NetBSD__		/* XXX io mapping */
+	struct drm_i915_private *dev_priv = overlay->dev->dev_private;
+
+	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
+		io_mapping_unmap_atomic(dev_priv->gtt.mappable, regs);
+#else
 	if (!OVERLAY_NEEDS_PHYSICAL(overlay->dev))
 		io_mapping_unmap_atomic(regs);
+#endif
 }
 
 

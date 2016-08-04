@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_dispnv04_tvnv04.c,v 1.2 2014/08/06 15:01:34 riastradh Exp $	*/
+
 /*
  * Copyright (C) 2009 Francisco Jerez.
  * All Rights Reserved.
@@ -23,6 +25,11 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_dispnv04_tvnv04.c,v 1.2 2014/08/06 15:01:34 riastradh Exp $");
+
+#include <linux/err.h>
 
 #include <drm/drmP.h>
 #include "nouveau_drm.h"

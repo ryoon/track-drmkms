@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_fb_nv30.c,v 1.1.1.1 2014/08/06 12:36:30 riastradh Exp $	*/
+
 /*
  * Copyright (C) 2010 Francisco Jerez.
  * All Rights Reserved.
@@ -23,6 +25,9 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_fb_nv30.c,v 1.1.1.1 2014/08/06 12:36:30 riastradh Exp $");
 
 #include "nv04.h"
 

@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_nv17_fence.c,v 1.1.1.1 2014/08/06 12:36:23 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs <bskeggs@redhat.com>
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_nv17_fence.c,v 1.1.1.1 2014/08/06 12:36:23 riastradh Exp $");
 
 #include <core/object.h>
 #include <core/class.h>

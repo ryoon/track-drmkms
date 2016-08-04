@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_graph_ctxnv40.c,v 1.1.1.1 2014/08/06 12:36:25 riastradh Exp $	*/
+
 /*
  * Copyright 2009 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_graph_ctxnv40.c,v 1.1.1.1 2014/08/06 12:36:25 riastradh Exp $");
 
 #include <core/gpuobj.h>
 

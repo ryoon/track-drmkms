@@ -63,7 +63,7 @@ static struct intel_crt *intel_attached_crt(struct drm_connector *connector)
 }
 
 static bool intel_crt_get_hw_state(struct intel_encoder *encoder,
-				   enum pipe *pipe)
+				   enum i915_pipe *pipe)
 {
 	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -812,7 +812,7 @@ static const struct dmi_system_id intel_no_crt[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "XPS 8700"),
 		},
 	},
-	{ }
+	{ .callback = NULL }
 };
 
 void intel_crt_init(struct drm_device *dev)

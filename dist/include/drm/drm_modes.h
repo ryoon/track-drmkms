@@ -27,6 +27,11 @@
 #ifndef __DRM_MODES_H__
 #define __DRM_MODES_H__
 
+#include <linux/list.h>
+
+struct device_node;
+struct videomode;
+
 /*
  * Note on terminology:  here, for brevity and convenience, we refer to connector
  * control chips as 'CRTCs'.  They can control any type of connector, VGA, LVDS,
@@ -86,7 +91,7 @@ enum drm_mode_status {
 	.htotal = (ht), .hskew = (hsk), .vdisplay = (vd), \
 	.vsync_start = (vss), .vsync_end = (vse), .vtotal = (vt), \
 	.vscan = (vs), .flags = (f), \
-	.base.type = DRM_MODE_OBJECT_MODE
+	.base = { .type = DRM_MODE_OBJECT_MODE }
 
 #define CRTC_INTERLACE_HALVE_V	(1 << 0) /* halve V values for interlacing */
 #define CRTC_STEREO_DOUBLE	(1 << 1) /* adjust timings for stereo modes */

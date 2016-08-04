@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_crypt_nv84.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_crypt_nv84.c,v 1.2 2014/08/23 08:03:33 riastradh Exp $");
 
 #include <core/client.h>
 #include <core/os.h>
@@ -129,7 +134,7 @@ nv84_crypt_intr(struct nouveau_subdev *subdev)
 	if (stat) {
 		nv_error(priv, "%s", "");
 		nouveau_bitfield_print(nv84_crypt_intr_mask, stat);
-		pr_cont(" ch %d [0x%010llx %s] mthd 0x%04x data 0x%08x\n",
+		pr_cont(" ch %d [0x%010"PRIx64" %s] mthd 0x%04x data 0x%08x\n",
 		       chid, (u64)inst << 12, nouveau_client_name(engctx),
 		       mthd, data);
 	}

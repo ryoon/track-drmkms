@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_bios_base.c,v 1.3 2015/10/27 13:13:47 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_bios_base.c,v 1.3 2015/10/27 13:13:47 riastradh Exp $");
 
 #include <core/object.h>
 #include <core/device.h>
@@ -257,6 +262,10 @@ nouveau_bios_shadow_acpi(struct nouveau_bios *bios)
 	}
 }
 
+#ifdef __NetBSD__
+#  define	__iomem	__pci_rom_iomem
+#endif
+
 static void
 nouveau_bios_shadow_pci(struct nouveau_bios *bios)
 {
@@ -294,6 +303,10 @@ nouveau_bios_shadow_platform(struct nouveau_bios *bios)
 		}
 	}
 }
+
+#ifdef __NetBSD__
+#  undef	__iomem
+#endif
 
 static int
 nouveau_bios_score(struct nouveau_bios *bios, const bool writeable)
@@ -363,7 +376,8 @@ nouveau_bios_shadow(struct nouveau_bios *bios)
 		} while ((++mthd)->shadow);
 
 		/* attempt to load firmware image */
-		ret = request_firmware(&fw, source, &nv_device(bios)->pdev->dev);
+		ret = request_firmware(&fw, source,
+		    nv_device_base(nv_device(bios)));
 		if (ret == 0) {
 			bios->size = fw->size;
 			bios->data = kmemdup(fw->data, fw->size, GFP_KERNEL);

@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_engine_falcon.c,v 1.1.1.1 2014/08/06 12:36:24 riastradh Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -19,6 +21,9 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_engine_falcon.c,v 1.1.1.1 2014/08/06 12:36:24 riastradh Exp $");
 
 #include <engine/falcon.h>
 #include <subdev/timer.h>

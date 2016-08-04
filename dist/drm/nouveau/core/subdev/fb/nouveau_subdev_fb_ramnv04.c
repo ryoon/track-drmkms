@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_fb_ramnv04.c,v 1.1.1.1 2014/08/06 12:36:30 riastradh Exp $	*/
+
 /*
  * Copyright 2013 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_fb_ramnv04.c,v 1.1.1.1 2014/08/06 12:36:30 riastradh Exp $");
 
 #define NV04_PFB_BOOT_0						0x00100000
 #	define NV04_PFB_BOOT_0_RAM_AMOUNT			0x00000003

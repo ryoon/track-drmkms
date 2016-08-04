@@ -149,11 +149,11 @@ int radeon_agp_init(struct radeon_device *rdev)
 		return ret;
 	}
 
-	if (rdev->ddev->agp->agp_info.aper_size < 32) {
+	if (rdev->ddev->agp->agp_info.aki_info.ai_aperture_size >> 20 < 32) {
 		drm_agp_release(rdev->ddev);
 		dev_warn(rdev->dev, "AGP aperture too small (%zuM) "
 			"need at least 32M, disabling AGP\n",
-			rdev->ddev->agp->agp_info.aper_size);
+			rdev->ddev->agp->agp_info.aki_info.ai_aperture_size >> 20);
 		return -EINVAL;
 	}
 
@@ -241,12 +241,16 @@ int radeon_agp_init(struct radeon_device *rdev)
 		return ret;
 	}
 
-	rdev->mc.agp_base = rdev->ddev->agp->agp_info.aper_base;
-	rdev->mc.gtt_size = rdev->ddev->agp->agp_info.aper_size << 20;
+	rdev->mc.agp_base = rdev->ddev->agp->agp_info.aki_info.ai_aperture_base;
+	rdev->mc.gtt_size = rdev->ddev->agp->agp_info.aki_info.ai_aperture_size;
 	rdev->mc.gtt_start = rdev->mc.agp_base;
 	rdev->mc.gtt_end = rdev->mc.gtt_start + rdev->mc.gtt_size - 1;
-	dev_info(rdev->dev, "GTT: %lluM 0x%08llX - 0x%08llX\n",
+	dev_info(rdev->dev, "GTT: %"PRIu64"M 0x%08"PRIX64" - 0x%08"PRIX64"\n",
 		rdev->mc.gtt_size >> 20, rdev->mc.gtt_start, rdev->mc.gtt_end);
+
+#ifdef __NetBSD__
+	pmap_pv_track(rdev->mc.agp_base, rdev->mc.gtt_size);
+#endif
 
 	/* workaround some hw issues */
 	if (rdev->family < CHIP_R200) {
@@ -274,6 +278,9 @@ void radeon_agp_fini(struct radeon_device *rdev)
 {
 #if __OS_HAS_AGP
 	if (rdev->ddev->agp && rdev->ddev->agp->acquired) {
+#ifdef __NetBSD__
+		pmap_pv_untrack(rdev->mc.agp_base, rdev->mc.gtt_size);
+#endif
 		drm_agp_release(rdev->ddev);
 	}
 #endif

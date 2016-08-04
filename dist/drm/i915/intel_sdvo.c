@@ -29,6 +29,8 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/export.h>
+#include <linux/bitops.h>
+#include <linux/module.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
@@ -422,7 +424,7 @@ static void intel_sdvo_debug_write(struct intel_sdvo *intel_sdvo, u8 cmd,
 
 
 	for (i = 0; i < args_len; i++) {
-		BUF_PRINT("%02X ", ((u8 *)args)[i]);
+		BUF_PRINT("%02X ", ((const u8 *)args)[i]);
 	}
 	for (; i < 8; i++) {
 		BUF_PRINT("   ");
@@ -479,7 +481,7 @@ static bool intel_sdvo_write_cmd(struct intel_sdvo *intel_sdvo, u8 cmd,
 		msgs[i].len = 2;
 		msgs[i].buf = buf + 2 *i;
 		buf[2*i + 0] = SDVO_I2C_ARG_0 - i;
-		buf[2*i + 1] = ((u8*)args)[i];
+		buf[2*i + 1] = ((const u8*)args)[i];
 	}
 	msgs[i].addr = intel_sdvo->slave_addr;
 	msgs[i].flags = 0;
@@ -632,7 +634,12 @@ intel_sdvo_get_value(struct intel_sdvo *intel_sdvo, u8 cmd, void *value, int len
 
 static bool intel_sdvo_set_target_input(struct intel_sdvo *intel_sdvo)
 {
+#ifdef __NetBSD__
+	static const struct intel_sdvo_set_target_input_args zero_targets;
+	struct intel_sdvo_set_target_input_args targets = zero_targets;
+#else
 	struct intel_sdvo_set_target_input_args targets = {0};
+#endif
 	return intel_sdvo_set_value(intel_sdvo,
 				    SDVO_CMD_SET_TARGET_INPUT,
 				    &targets, sizeof(targets));
@@ -857,7 +864,8 @@ static void intel_sdvo_get_dtd_from_mode(struct intel_sdvo_dtd *dtd,
 static void intel_sdvo_get_mode_from_dtd(struct drm_display_mode *pmode,
 					 const struct intel_sdvo_dtd *dtd)
 {
-	struct drm_display_mode mode = {};
+	static const struct drm_display_mode zero_mode;
+	struct drm_display_mode mode = zero_mode;
 
 	mode.hdisplay = dtd->part1.h_active;
 	mode.hdisplay += ((dtd->part1.h_high >> 4) & 0x0f) << 8;
@@ -1314,7 +1322,7 @@ static bool intel_sdvo_connector_get_hw_state(struct intel_connector *connector)
 }
 
 static bool intel_sdvo_get_hw_state(struct intel_encoder *encoder,
-				    enum pipe *pipe)
+				    enum i915_pipe *pipe)
 {
 	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -2384,6 +2392,7 @@ intel_sdvo_get_slave_addr(struct drm_device *dev, struct intel_sdvo *sdvo)
 static void
 intel_sdvo_connector_unregister(struct intel_connector *intel_connector)
 {
+#ifndef __NetBSD__
 	struct drm_connector *drm_connector;
 	struct intel_sdvo *sdvo_encoder;
 
@@ -2392,6 +2401,7 @@ intel_sdvo_connector_unregister(struct intel_connector *intel_connector)
 
 	sysfs_remove_link(&drm_connector->kdev->kobj,
 			  sdvo_encoder->ddc.dev.kobj.name);
+#endif
 	intel_connector_unregister(intel_connector);
 }
 
@@ -2424,16 +2434,20 @@ intel_sdvo_connector_init(struct intel_sdvo_connector *connector,
 	if (ret < 0)
 		goto err1;
 
+#ifndef __NetBSD__
 	ret = sysfs_create_link(&drm_connector->kdev->kobj,
 				&encoder->ddc.dev.kobj,
 				encoder->ddc.dev.kobj.name);
 	if (ret < 0)
 		goto err2;
+#endif
 
 	return 0;
 
+#ifndef __NetBSD__
 err2:
 	drm_sysfs_connector_remove(drm_connector);
+#endif
 err1:
 	drm_connector_cleanup(drm_connector);
 
@@ -2957,7 +2971,7 @@ intel_sdvo_init_ddc_proxy(struct intel_sdvo *sdvo,
 	sdvo->ddc.owner = THIS_MODULE;
 	sdvo->ddc.class = I2C_CLASS_DDC;
 	snprintf(sdvo->ddc.name, I2C_NAME_SIZE, "SDVO DDC proxy");
-	sdvo->ddc.dev.parent = &dev->pdev->dev;
+	sdvo->ddc.dev.parent = dev->dev;
 	sdvo->ddc.algo_data = sdvo;
 	sdvo->ddc.algo = &intel_sdvo_ddc_proxy;
 

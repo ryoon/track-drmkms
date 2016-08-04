@@ -86,7 +86,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 static struct ch7xxx_id_struct {
 	uint8_t vid;
-	char *name;
+	const char *name;
 } ch7xxx_ids[] = {
 	{ CH7011_VID, "CH7011" },
 	{ CH7010B_VID, "CH7010B" },
@@ -97,7 +97,7 @@ static struct ch7xxx_id_struct {
 
 static struct ch7xxx_did_struct {
 	uint8_t did;
-	char *name;
+	const char *name;
 } ch7xxx_dids[] = {
 	{ CH7xxx_DID, "CH7XXX" },
 	{ CH7010_DID, "CH7010B" },
@@ -107,7 +107,7 @@ struct ch7xxx_priv {
 	bool quiet;
 };
 
-static char *ch7xxx_get_id(uint8_t vid)
+static const char *ch7xxx_get_id(uint8_t vid)
 {
 	int i;
 
@@ -119,7 +119,7 @@ static char *ch7xxx_get_id(uint8_t vid)
 	return NULL;
 }
 
-static char *ch7xxx_get_did(uint8_t did)
+static const char *ch7xxx_get_did(uint8_t did)
 {
 	int i;
 
@@ -202,7 +202,7 @@ static bool ch7xxx_init(struct intel_dvo_device *dvo,
 	/* this will detect the CH7xxx chip on the specified i2c bus */
 	struct ch7xxx_priv *ch7xxx;
 	uint8_t vendor, device;
-	char *name, *devid;
+	const char *name, *devid;
 
 	ch7xxx = kzalloc(sizeof(struct ch7xxx_priv), GFP_KERNEL);
 	if (ch7xxx == NULL)

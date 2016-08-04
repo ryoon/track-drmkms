@@ -30,6 +30,7 @@
 #include "atom.h"
 #include <asm/div64.h>
 
+#include <linux/err.h>
 #include <linux/pm_runtime.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_edid.h>
@@ -180,12 +181,36 @@ static void legacy_crtc_load_lut(struct drm_crtc *crtc)
 		dac2_cntl |= RADEON_DAC2_PALETTE_ACC_CTL;
 	WREG32(RADEON_DAC_CNTL2, dac2_cntl);
 
-	WREG8(RADEON_PALETTE_INDEX, 0);
-	for (i = 0; i < 256; i++) {
-		WREG32(RADEON_PALETTE_30_DATA,
-			     (radeon_crtc->lut_r[i] << 20) |
-			     (radeon_crtc->lut_g[i] << 10) |
-			     (radeon_crtc->lut_b[i] << 0));
+	/*
+	 * At least the RV100 [vendor 1002 product 515e (rev. 0x02)]
+	 * has an old style palette
+	 */
+	if (rdev->family < CHIP_RV280) {
+#ifdef notyet
+		/*
+		 * Leave CLUT alone for now. The code below gives us a
+		 * nice 444 grayscale, but we are not in true color mode
+		 * anymore and I don't have any docs how to do this right.
+		 */
+		WREG8(RADEON_PALETTE_INDEX, 0);
+		for (i = 0; i < 256; i++) {
+#define R(x) (radeon_crtc->lut_r[i] >> 2)
+#define G(x) (radeon_crtc->lut_g[i] >> 2)
+#define B(x) (radeon_crtc->lut_b[i] >> 2)
+			WREG32(RADEON_PALETTE_DATA, ((R(i) << 16)
+				| (G(i) << 8) | B(i)) << 4);
+		}
+#else
+		printf("%s: unknown DAC, can't set lookup table\n", __func__);
+#endif
+	} else {
+		WREG8(RADEON_PALETTE_INDEX, 0);
+		for (i = 0; i < 256; i++) {
+			WREG32(RADEON_PALETTE_30_DATA,
+				     (radeon_crtc->lut_r[i] << 20) |
+				     (radeon_crtc->lut_g[i] << 10) |
+				     (radeon_crtc->lut_b[i] << 0));
+		}
 	}
 }
 
@@ -1030,7 +1055,7 @@ void radeon_compute_pll_avivo(struct radeon_pll *pll,
 /* pre-avivo */
 static inline uint32_t radeon_div(uint64_t n, uint32_t d)
 {
-	uint64_t mod;
+	uint64_t mod __unused;
 
 	n += d / 2;
 
@@ -1063,7 +1088,7 @@ void radeon_compute_pll_legacy(struct radeon_pll *pll,
 	uint32_t post_div;
 	u32 pll_out_min, pll_out_max;
 
-	DRM_DEBUG_KMS("PLL freq %llu %u %u\n", freq, pll->min_ref_div, pll->max_ref_div);
+	DRM_DEBUG_KMS("PLL freq %"PRIu64" %u %u\n", freq, pll->min_ref_div, pll->max_ref_div);
 	freq = freq * 1000;
 
 	if (pll->flags & RADEON_PLL_IS_LCD) {
@@ -1276,7 +1301,7 @@ radeon_user_framebuffer_create(struct drm_device *dev,
 
 	obj = drm_gem_object_lookup(dev, file_priv, mode_cmd->handles[0]);
 	if (obj ==  NULL) {
-		dev_err(&dev->pdev->dev, "No GEM object associated to handle 0x%08X, "
+		dev_err(dev->dev, "No GEM object associated to handle 0x%08X, "
 			"can't create framebuffer\n", mode_cmd->handles[0]);
 		return ERR_PTR(-ENOENT);
 	}

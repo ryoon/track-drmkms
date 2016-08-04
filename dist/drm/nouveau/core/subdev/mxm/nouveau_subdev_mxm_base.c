@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_mxm_base.c,v 1.1.1.1 2014/08/06 12:36:31 riastradh Exp $	*/
+
 /*
  * Copyright 2011 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_mxm_base.c,v 1.1.1.1 2014/08/06 12:36:31 riastradh Exp $");
 
 #include <core/option.h>
 

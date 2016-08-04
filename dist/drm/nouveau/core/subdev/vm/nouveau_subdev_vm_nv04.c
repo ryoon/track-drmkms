@@ -1,3 +1,5 @@
+/*	$NetBSD: nouveau_subdev_vm_nv04.c,v 1.3 2015/10/14 00:12:55 mrg Exp $	*/
+
 /*
  * Copyright 2012 Red Hat Inc.
  *
@@ -21,6 +23,9 @@
  *
  * Authors: Ben Skeggs
  */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: nouveau_subdev_vm_nv04.c,v 1.3 2015/10/14 00:12:55 mrg Exp $");
 
 #include <core/gpuobj.h>
 
@@ -132,10 +137,23 @@ nv04_vmmgr_dtor(struct nouveau_object *object)
 		nouveau_gpuobj_ref(NULL, &priv->vm->pgt[0].obj[0]);
 		nouveau_vm_ref(NULL, &priv->vm, NULL);
 	}
+#ifdef __NetBSD__
+	if (priv->nullp) {
+		struct nouveau_device *device = nv_device(priv);
+		const bus_dma_tag_t dmat = pci_dma64_available(&device->pdev->pd_pa) ?
+		    device->pdev->pd_pa.pa_dmat64 : device->pdev->pd_pa.pa_dmat;
+
+		bus_dmamap_unload(dmat, priv->nullmap);
+		bus_dmamem_unmap(dmat, priv->nullp, PAGE_SIZE);
+		bus_dmamap_destroy(dmat, priv->nullmap);
+		bus_dmamem_free(dmat, &priv->nullseg, 1);
+	}
+#else
 	if (priv->nullp) {
 		pci_free_consistent(nv_device(priv)->pdev, 16 * 1024,
 				    priv->nullp, priv->null);
 	}
+#endif
 	nouveau_vmmgr_destroy(&priv->base);
 }
 

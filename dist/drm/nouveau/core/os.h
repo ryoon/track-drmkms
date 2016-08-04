@@ -21,9 +21,23 @@
 #include <linux/interrupt.h>
 #include <linux/log2.h>
 #include <linux/pm_runtime.h>
+#include <linux/atomic.h>
+#include <linux/bug.h>
+#include <linux/kernel.h>
+#include <linux/kref.h>
+#include <linux/list.h>
+#include <linux/spinlock.h>
+#include <linux/math64.h>
+#include <linux/io-mapping.h>
+#include <linux/jiffies.h>
+#include <linux/errno.h>
+#include <linux/workqueue.h>
 
+#include <asm/byteorder.h>
+#include <asm/io.h>
 #include <asm/unaligned.h>
 
+#ifndef __NetBSD__		/* XXX ioread */
 #ifndef ioread32_native
 #ifdef __BIG_ENDIAN
 #define ioread16_native ioread16be
@@ -37,5 +51,6 @@
 #define iowrite32_native iowrite32
 #endif /* def __BIG_ENDIAN else */
 #endif /* !ioread32_native */
+#endif
 
 #endif
