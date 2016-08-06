@@ -34,6 +34,13 @@
 #include <linux/slab.h>
 #include <linux/fb.h>
 #include <linux/module.h>
+#include <linux/device.h>
+#include <linux/export.h>
+#include <linux/list.h>
+#include <linux/notifier.h>
+#include <linux/printk.h>
+#include <linux/sysrq.h>
+#include <asm/bug.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_fb_helper.h>
@@ -46,7 +53,12 @@ module_param_named(fbdev_emulation, drm_fbdev_emulation, bool, 0600);
 MODULE_PARM_DESC(fbdev_emulation,
 		 "Enable legacy fbdev emulation [default=true]");
 
+#ifdef __NetBSD__              /* XXX LIST_HEAD means something else */
+static struct list_head kernel_fb_helper_list =
+    LIST_HEAD_INIT(kernel_fb_helper_list);
+#else
 static LIST_HEAD(kernel_fb_helper_list);
+#endif
 
 /**
  * DOC: fbdev helpers
@@ -234,9 +246,16 @@ static void drm_fb_helper_restore_lut_atomic(struct drm_crtc *crtc)
  * drm_fb_helper_debug_enter - implementation for ->fb_debug_enter
  * @info: fbdev registered by the helper
  */
+#ifndef __NetBSD__
 int drm_fb_helper_debug_enter(struct fb_info *info)
 {
-	struct drm_fb_helper *helper = info->par;
+	return drm_fb_helper_debug_enter_fb(info->par);
+}
+#endif
+
+int
+drm_fb_helper_debug_enter_fb(struct drm_fb_helper *helper)
+{
 	const struct drm_crtc_helper_funcs *funcs;
 	int i;
 
@@ -280,9 +299,16 @@ static struct drm_framebuffer *drm_mode_config_fb(struct drm_crtc *crtc)
  * drm_fb_helper_debug_leave - implementation for ->fb_debug_leave
  * @info: fbdev registered by the helper
  */
+#ifndef __NetBSD__
 int drm_fb_helper_debug_leave(struct fb_info *info)
 {
-	struct drm_fb_helper *helper = info->par;
+	return drm_fb_helper_debug_leave_fb(info->par);
+}
+#endif
+
+int
+drm_fb_helper_debug_leave_fb(struct drm_fb_helper *helper)
+{
 	struct drm_crtc *crtc;
 	const struct drm_crtc_helper_funcs *funcs;
 	struct drm_framebuffer *fb;
@@ -528,9 +554,10 @@ static struct sysrq_key_op sysrq_drm_fb_helper_restore_op = {
 	.action_msg = "Restore framebuffer console",
 };
 #else
-static struct sysrq_key_op sysrq_drm_fb_helper_restore_op = { };
+static struct sysrq_key_op sysrq_drm_fb_helper_restore_op;
 #endif
 
+#ifndef __NetBSD__		/* XXX fb info */
 static void drm_fb_helper_dpms(struct fb_info *info, int dpms_mode)
 {
 	struct drm_fb_helper *fb_helper = info->par;
@@ -600,6 +627,7 @@ int drm_fb_helper_blank(int blank, struct fb_info *info)
 	return 0;
 }
 EXPORT_SYMBOL(drm_fb_helper_blank);
+#endif
 
 static void drm_fb_helper_crtc_free(struct drm_fb_helper *helper)
 {
@@ -1037,6 +1065,7 @@ void drm_fb_helper_set_suspend(struct drm_fb_helper *fb_helper, int state)
 }
 EXPORT_SYMBOL(drm_fb_helper_set_suspend);
 
+#ifndef __NetBSD__		/* XXX fb info */
 static int setcolreg(struct drm_crtc *crtc, u16 red, u16 green,
 		     u16 blue, u16 regno, struct fb_info *info)
 {
@@ -1262,7 +1291,9 @@ int drm_fb_helper_check_var(struct fb_var_screeninfo *var,
 	return 0;
 }
 EXPORT_SYMBOL(drm_fb_helper_check_var);
+#endif
 
+#ifndef __NetBSD__		/* XXX fb info */
 /**
  * drm_fb_helper_set_par - implementation for ->fb_set_par
  * @info: fbdev registered by the helper
@@ -1350,6 +1381,7 @@ backoff:
 	goto retry;
 }
 
+#ifndef __NetBSD__		/* XXX fb info */
 /**
  * drm_fb_helper_pan_display - implementation for ->fb_pan_display
  * @var: updated screen information
@@ -1397,6 +1429,7 @@ unlock:
 	return ret;
 }
 EXPORT_SYMBOL(drm_fb_helper_pan_display);
+#endif
 
 /*
  * Allocates the backing storage and sets up the fbdev info structure through
@@ -1409,7 +1442,9 @@ static int drm_fb_helper_single_fb_probe(struct drm_fb_helper *fb_helper,
 	int ret = 0;
 	int crtc_count = 0;
 	int i;
++#ifndef __NetBSD__		/* XXX fb info */
 	struct fb_info *info;
+#endif
 	struct drm_fb_helper_surface_size sizes;
 	int gamma_size = 0;
 
@@ -1512,7 +1547,9 @@ static int drm_fb_helper_single_fb_probe(struct drm_fb_helper *fb_helper,
 	if (ret < 0)
 		return ret;
 
+#ifndef __NetBSD__		/* XXX fb info */
 	info = fb_helper->fbdev;
+#endif
 
 	/*
 	 * Set the fb pointer - usually drm_setup_crtcs does this for hotplug
@@ -1526,12 +1563,14 @@ static int drm_fb_helper_single_fb_probe(struct drm_fb_helper *fb_helper,
 			fb_helper->crtc_info[i].mode_set.fb = fb_helper->fb;
 
 
+#ifndef __NetBSD__		/* XXX fb info */
 	info->var.pixclock = 0;
 	if (register_framebuffer(info) < 0)
 		return -EINVAL;
 
 	dev_info(fb_helper->dev->dev, "fb%d: %s frame buffer device\n",
 			info->node, info->fix.id);
+#endif
 
 	if (list_empty(&kernel_fb_helper_list)) {
 		register_sysrq_key('v', &sysrq_drm_fb_helper_restore_op);
@@ -1542,6 +1581,7 @@ static int drm_fb_helper_single_fb_probe(struct drm_fb_helper *fb_helper,
 	return 0;
 }
 
+#ifndef __NetBSD__		/* XXX fb info */
 /**
  * drm_fb_helper_fill_fix - initializes fixed fbdev information
  * @info: fbdev registered by the helper
@@ -1661,6 +1701,7 @@ void drm_fb_helper_fill_var(struct fb_info *info, struct drm_fb_helper *fb_helpe
 	info->var.yres = fb_height;
 }
 EXPORT_SYMBOL(drm_fb_helper_fill_var);
+#endif
 
 static int drm_fb_helper_probe_connector_modes(struct drm_fb_helper *fb_helper,
 					       uint32_t maxX,
@@ -2132,6 +2173,7 @@ static void drm_setup_crtcs(struct drm_fb_helper *fb_helper)
 			if (modeset->mode)
 				drm_mode_destroy(dev, modeset->mode);
 			modeset->mode = NULL;
+			fb_helper->crtc_info[i].desired_mode = NULL;
 		}
 	}
 out:
@@ -2254,7 +2296,11 @@ int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper)
 	drm_modeset_lock_all(dev);
 	drm_setup_crtcs(fb_helper);
 	drm_modeset_unlock_all(dev);
+#ifdef __NetBSD__
+	drm_fb_helper_restore_fbdev_mode_unlocked(fb_helper);
+#else
 	drm_fb_helper_set_par(fb_helper->fbdev);
+#endif
 
 	return 0;
 }
