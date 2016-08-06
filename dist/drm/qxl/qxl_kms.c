@@ -223,6 +223,7 @@ static int qxl_device_init(struct qxl_device *qdev,
 
 	idr_init(&qdev->release_idr);
 	spin_lock_init(&qdev->release_idr_lock);
+	spin_lock_init(&qdev->release_lock);
 
 	idr_init(&qdev->surf_id_idr);
 	spin_lock_init(&qdev->surf_id_idr_lock);
@@ -260,10 +261,6 @@ static int qxl_device_init(struct qxl_device *qdev,
 	qdev->gc_queue = create_singlethread_workqueue("qxl_gc");
 	INIT_WORK(&qdev->gc_work, qxl_gc_work);
 
-	r = qxl_fb_init(qdev);
-	if (r)
-		return r;
-
 	return 0;
 }
 
@@ -297,6 +294,9 @@ int qxl_driver_unload(struct drm_device *dev)
 
 	if (qdev == NULL)
 		return 0;
+
+	drm_vblank_cleanup(dev);
+
 	qxl_modeset_fini(qdev);
 	qxl_device_fini(qdev);
 
@@ -324,15 +324,20 @@ int qxl_driver_load(struct drm_device *dev, unsigned long flags)
 	if (r)
 		goto out;
 
+	r = drm_vblank_init(dev, 1);
+	if (r)
+		goto unload;
+
 	r = qxl_modeset_init(qdev);
-	if (r) {
-		qxl_driver_unload(dev);
-		goto out;
-	}
+	if (r)
+		goto unload;
 
 	drm_kms_helper_poll_init(qdev->ddev);
 
 	return 0;
+unload:
+	qxl_driver_unload(dev);
+
 out:
 	kfree(qdev);
 	return r;
