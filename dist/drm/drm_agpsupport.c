@@ -36,8 +36,7 @@
 #include <linux/export.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-
-#if __OS_HAS_AGP
+#include "drm_legacy.h"
 
 #include <asm/agp.h>
 
@@ -240,7 +239,7 @@ int drm_agp_alloc(struct drm_device *dev, struct drm_agp_buffer *request)
 	list_add(&entry->head, &dev->agp->memory);
 
 	request->handle = entry->handle;
-#ifdef __NetBSD__
++#ifdef __NetBSD__
 	{
 		struct agp_memory_info info;
 		agp_memory_info(dev->agp->bridge, memory, &info);
@@ -477,7 +476,7 @@ struct drm_agp_head *drm_agp_init(struct drm_device *dev)
 }
 
 /**
- * drm_agp_clear - Clear AGP resource list
+ * drm_legacy_agp_clear - Clear AGP resource list
  * @dev: DRM device
  *
  * Iterate over all AGP resources and remove them. But keep the AGP head
@@ -488,7 +487,7 @@ struct drm_agp_head *drm_agp_init(struct drm_device *dev)
  * resources from getting destroyed. Drivers are responsible of cleaning them up
  * during device shutdown.
  */
-void drm_agp_clear(struct drm_device *dev)
+void drm_legacy_agp_clear(struct drm_device *dev)
 {
 	struct drm_agp_mem *entry, *tempe;
 
@@ -501,6 +500,8 @@ void drm_agp_clear(struct drm_device *dev)
 		if (entry->bound)
 #ifdef __NetBSD__
 			drm_unbind_agp(dev->agp->bridge, entry->memory);
+#else
+			drm_unbind_agp(entry->memory);
 #endif
 #ifdef __NetBSD__
 		drm_free_agp(dev->agp->bridge, entry->memory, entry->pages);
@@ -561,7 +562,4 @@ drm_agp_bind_pages(struct drm_device *dev,
 	return mem;
 }
 EXPORT_SYMBOL(drm_agp_bind_pages);
-
 #endif
-
-#endif /* __OS_HAS_AGP */
