@@ -47,7 +47,11 @@ void drm_global_init(void)
 
 	for (i = 0; i < DRM_GLOBAL_NUM; ++i) {
 		struct drm_global_item *item = &glob[i];
+#ifdef __NetBSD__
+		linux_mutex_init(&item->mutex);
+#else
 		mutex_init(&item->mutex);
+#endif
 		item->object = NULL;
 		item->refcount = 0;
 	}
@@ -58,6 +62,7 @@ void drm_global_release(void)
 	int i;
 	for (i = 0; i < DRM_GLOBAL_NUM; ++i) {
 		struct drm_global_item *item = &glob[i];
+		(void)item;	/* ignore */
 		BUG_ON(item->object != NULL);
 		BUG_ON(item->refcount != 0);
 	}
