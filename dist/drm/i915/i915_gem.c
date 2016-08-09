@@ -5143,9 +5143,21 @@ void i915_gem_load_cleanup(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
 
+	/* XXX intel_pm_fini */
+	linux_mutex_destroy(&dev_priv->rps.hw_lock);
 	kmem_cache_destroy(dev_priv->requests);
 	kmem_cache_destroy(dev_priv->vmas);
 	kmem_cache_destroy(dev_priv->objects);
+#ifdef __NetBSD__
+	spin_lock_destroy(&mchdev_lock);
+	linux_mutex_destroy(&dev_priv->modeset_restore_lock);
+	linux_mutex_destroy(&dev_priv->dpio_lock);
+	spin_lock_destroy(&dev_priv->mm.object_stat_lock);
+	spin_lock_destroy(&dev_priv->uncore.lock);
+	spin_lock_destroy(&dev_priv->backlight_lock);
+	spin_lock_destroy(&dev_priv->gpu_error.lock);
+	spin_lock_destroy(&dev_priv->irq_lock);
+#endif
 }
 
 void i915_gem_release(struct drm_device *dev, struct drm_file *file)

@@ -434,4 +434,11 @@ void i915_gem_shrinker_cleanup(struct drm_i915_private *dev_priv)
 	WARN_ON(unregister_vmap_purge_notifier(&dev_priv->mm.vmap_notifier));
 	WARN_ON(unregister_oom_notifier(&dev_priv->mm.oom_notifier));
 	unregister_shrinker(&dev_priv->mm.shrinker);
+
+#ifdef __NetBSD__
+	DRM_DESTROY_WAITQUEUE(&dev_priv->pending_flip_queue);
+	spin_lock_destroy(&dev_priv->pending_flip_lock);
+	DRM_DESTROY_WAITQUEUE(&dev_priv->gpu_error.reset_queue);
+	spin_lock_destroy(&dev_priv->gpu_error.reset_lock);
+#endif
 }

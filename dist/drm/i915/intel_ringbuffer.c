@@ -2178,6 +2178,9 @@ int intel_pin_and_map_ringbuffer_obj(struct drm_device *dev,
 	unsigned flags = PIN_OFFSET_BIAS | 4096;
 	void *addr;
 	int ret;
+#ifdef __NetBSD__
+	int ret2;
+#endif
 
 	if (HAS_LLC(dev_priv) && !obj->stolen) {
 		ret = i915_gem_obj_ggtt_pin(obj, PAGE_SIZE, flags);

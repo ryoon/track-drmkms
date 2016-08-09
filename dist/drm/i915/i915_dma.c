@@ -192,7 +192,11 @@ static int i915_getparam(struct drm_device *dev, void *data,
 		value = 1;
 		break;
 	case I915_PARAM_HAS_SECURE_BATCHES:
+#ifdef __NetBSD__
+		value = DRM_SUSER();
+#else
 		value = capable(CAP_SYS_ADMIN);
+#endif
 		break;
 	case I915_PARAM_HAS_PINNED_BATCHES:
 		value = 1;
@@ -263,17 +267,19 @@ intel_alloc_mchbar_resource(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	int reg = INTEL_INFO(dev)->gen >= 4 ? MCHBAR_I965 : MCHBAR_I915;
+#ifdef CONFIG_PNP
 	u32 temp_lo, temp_hi = 0;
 	u64 mchbar_addr;
+#endif
 	int ret;
 
+#ifdef CONFIG_PNP
 	if (INTEL_INFO(dev)->gen >= 4)
 		pci_read_config_dword(dev_priv->bridge_dev, reg + 4, &temp_hi);
 	pci_read_config_dword(dev_priv->bridge_dev, reg, &temp_lo);
 	mchbar_addr = ((u64)temp_hi << 32) | temp_lo;
 
 	/* If ACPI doesn't have it, assume we need to allocate it ourselves */
-#ifdef CONFIG_PNP
 	if (mchbar_addr &&
 	    pnp_range_reserved(mchbar_addr, mchbar_addr + MCHBAR_SIZE))
 		return 0;
@@ -374,6 +380,7 @@ intel_teardown_mchbar(struct drm_device *dev)
 		release_resource(&dev_priv->mch_res);
 }
 
+#ifndef __NetBSD__  /* XXX vga */
 /* true = enable decode, false = disable decoder */
 static unsigned int i915_vga_set_decode(void *cookie, bool state)
 {
@@ -424,6 +431,7 @@ static const struct vga_switcheroo_client_ops i915_switcheroo_ops = {
 	.reprobe = NULL,
 	.can_switch = i915_switcheroo_can_switch,
 };
+#endif
 
 static int i915_load_modeset_init(struct drm_device *dev)
 {
@@ -437,6 +445,7 @@ static int i915_load_modeset_init(struct drm_device *dev)
 	if (ret)
 		DRM_INFO("failed to find VBIOS tables\n");
 
++#ifndef __NetBSD__		/* XXX vga */
 	/* If we have > 1 VGA cards, then we need to arbitrate access
 	 * to the common VGA resources.
 	 *
@@ -447,12 +456,19 @@ static int i915_load_modeset_init(struct drm_device *dev)
 	ret = vga_client_register(dev->pdev, dev, NULL, i915_vga_set_decode);
 	if (ret && ret != -ENODEV)
 		goto out;
+#endif
 
+#ifdef __NetBSD__
+	intel_register_dsm_handler(dev);
+#else
 	intel_register_dsm_handler();
+#endif
 
++#ifndef __NetBSD__		/* XXX vga */
 	ret = vga_switcheroo_register_client(dev->pdev, &i915_switcheroo_ops, false);
 	if (ret)
 		goto cleanup_vga_client;
+#endif
 
 	intel_power_domains_init_hw(dev_priv, false);
 
@@ -510,13 +526,16 @@ cleanup_gem:
 cleanup_irq:
 	intel_guc_ucode_fini(dev);
 	drm_irq_uninstall(dev);
+	intel_modeset_cleanup(dev);
 	intel_teardown_gmbus(dev);
 cleanup_csr:
 	intel_csr_ucode_fini(dev_priv);
 	intel_power_domains_fini(dev_priv);
+#ifdef __NetBSD__		/* XXX vga */
 	vga_switcheroo_unregister_client(dev->pdev);
 cleanup_vga_client:
 	vga_client_register(dev->pdev, NULL, NULL, NULL);
+#endif
 out:
 	return ret;
 }
@@ -823,7 +842,7 @@ static void intel_device_info_runtime_init(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_device_info *info;
-	enum pipe pipe;
+	enum i915_pipe pipe;
 
 	info = (struct intel_device_info *)&dev_priv->info;
 
@@ -1022,19 +1041,36 @@ static int i915_driver_init_early(struct drm_i915_private *dev_priv,
 
 	spin_lock_init(&dev_priv->irq_lock);
 	spin_lock_init(&dev_priv->gpu_error.lock);
+#ifdef __NetBSD__
+	linux_mutex_init(&dev_priv->backlight_lock);
+#else
 	mutex_init(&dev_priv->backlight_lock);
+#endif
 	spin_lock_init(&dev_priv->uncore.lock);
 	spin_lock_init(&dev_priv->mm.object_stat_lock);
 	spin_lock_init(&dev_priv->mmio_flip_lock);
+#ifdef __NetBSD__
+	linux_mutex_init(&dev_priv->sb_lock);
+	linux_mutex_init(&dev_priv->modeset_restore_lock);
+	linux_mutex_init(&dev_priv->av_mutex);
+	linux_mutex_init(&dev_priv->wm.wm_mutex);
+	linux_mutex_init(&dev_priv->pps_mutex);
+#else
 	mutex_init(&dev_priv->sb_lock);
 	mutex_init(&dev_priv->modeset_restore_lock);
 	mutex_init(&dev_priv->av_mutex);
 	mutex_init(&dev_priv->wm.wm_mutex);
 	mutex_init(&dev_priv->pps_mutex);
+#endif
 
 	ret = i915_workqueues_init(dev_priv);
 	if (ret < 0)
 		return ret;
+
+#ifdef __NetBSD__
+	dev_priv->regs_bst = dev_priv->dev->pdev->pd_resources[mmio_bar].bst;
+	dev_priv->regs_bsh = dev_priv->dev->pdev->pd_resources[mmio_bar].bsh;
+#endif
 
 	/* This must be called before any calls to HAS_PCH_* */
 	intel_detect_pch(dev);
@@ -1156,8 +1192,24 @@ static void i915_driver_cleanup_mmio(struct drm_i915_private *dev_priv)
 	struct drm_device *dev = dev_priv->dev;
 
 	intel_uncore_fini(dev);
+	intel_uncore_destroy(dev);
 	i915_mmio_cleanup(dev);
 	pci_dev_put(dev_priv->bridge_dev);
+	/* XXX intel_pm_fini */
+	linux_mutex_destroy(&dev_priv->rps.hw_lock);
+#ifdef __NetBSD__
+	DRM_DESTROY_WAITQUEUE(&dev_priv->pending_flip_queue);
+	spin_lock_destroy(&dev_priv->pending_flip_lock);
+	DRM_DESTROY_WAITQUEUE(&dev_priv->gpu_error.reset_queue);
+	spin_lock_destroy(&mchdev_lock);
+	linux_mutex_destroy(&dev_priv->modeset_restore_lock);
+	linux_mutex_destroy(&dev_priv->dpio_lock);
+	spin_lock_destroy(&dev_priv->mm.object_stat_lock);
+	spin_lock_destroy(&dev_priv->uncore.lock);
+	spin_lock_destroy(&dev_priv->backlight_lock);
+	spin_lock_destroy(&dev_priv->gpu_error.lock);
+	spin_lock_destroy(&dev_priv->irq_lock);
+#endif
 }
 
 /**
@@ -1205,6 +1257,7 @@ static int i915_driver_init_hw(struct drm_i915_private *dev_priv)
 
 	pci_set_master(dev->pdev);
 
+#ifndef __NetBSD__		/* Handled in i915_gem_gtt.  */
 	/* overlay on gen2 is broken and can't address above 1G */
 	if (IS_GEN2(dev))
 		dma_set_coherent_mask(&dev->pdev->dev, DMA_BIT_MASK(30));
@@ -1219,12 +1272,21 @@ static int i915_driver_init_hw(struct drm_i915_private *dev_priv)
 	 */
 	if (IS_BROADWATER(dev) || IS_CRESTLINE(dev))
 		dma_set_coherent_mask(&dev->pdev->dev, DMA_BIT_MASK(32));
+#endif
 
 	aperture_size = ggtt->mappable_end;
 
+#ifdef __NetBSD__
+	dev_priv->gtt.mappable =
+	    drm_io_mapping_create_wc(dev, dev_priv->gtt.mappable_base,
+	    aperture_size);
+	/* Note: mappable_end is the size, not end paddr, of the aperture.  */
+	pmap_pv_track(dev_priv->gtt.mappable_base, dev_priv->gtt.mappable_end);
+#else
 	ggtt->mappable =
 		io_mapping_create_wc(ggtt->mappable_base,
 				     aperture_size);
+#endif
 	if (!ggtt->mappable) {
 		ret = -EIO;
 		goto out_ggtt;
@@ -1280,6 +1342,11 @@ static void i915_driver_cleanup_hw(struct drm_i915_private *dev_priv)
 
 	pm_qos_remove_request(&dev_priv->pm_qos);
 	arch_phys_wc_del(ggtt->mtrr);
+#ifdef __NetBSD__
+	/* Note: mappable_end is the size, not end paddr, of the aperture.  */
+	pmap_pv_untrack(dev_priv->gtt.mappable_base,
+	    dev_priv->gtt.mappable_end);
+#endif
 	io_mapping_free(ggtt->mappable);
 	i915_ggtt_cleanup_hw(dev);
 }
@@ -1446,13 +1513,19 @@ int i915_driver_unload(struct drm_device *dev)
 	kfree(dev_priv->vbt.lfp_lvds_vbt_mode);
 	dev_priv->vbt.lfp_lvds_vbt_mode = NULL;
 
+#ifndef __NetBSD__
 	vga_switcheroo_unregister_client(dev->pdev);
 	vga_client_register(dev->pdev, NULL, NULL, NULL);
+#endif
 
 	intel_csr_ucode_fini(dev_priv);
 
 	/* Free error state after interrupts are fully disabled. */
+#ifdef __NetBSD__
+	teardown_timer(&dev_priv->gpu_error.hangcheck_timer);
+#else
 	cancel_delayed_work_sync(&dev_priv->gpu_error.hangcheck_work);
+#endif
 	i915_destroy_error_state(dev);
 
 	/* Flush any outstanding unpin_work. */
@@ -1504,7 +1577,9 @@ int i915_driver_open(struct drm_device *dev, struct drm_file *file)
 void i915_driver_lastclose(struct drm_device *dev)
 {
 	intel_fbdev_restore_mode(dev);
++#ifndef __NetBSD__		/* XXX vga */
 	vga_switcheroo_process_delayed_switch();
+#endif
 }
 
 void i915_driver_preclose(struct drm_device *dev, struct drm_file *file)
@@ -1518,6 +1593,10 @@ void i915_driver_preclose(struct drm_device *dev, struct drm_file *file)
 void i915_driver_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct drm_i915_file_private *file_priv = file->driver_priv;
+
+#ifdef __NetBSD__
+	spin_lock_destroy(&file_priv->mm.lock);
+#endif
 
 	kfree(file_priv);
 }
