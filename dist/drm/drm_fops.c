@@ -808,7 +808,13 @@ void drm_send_event_locked(struct drm_device *dev, struct drm_pending_event *e)
 	list_del(&e->pending_link);
 	list_add_tail(&e->link,
 		      &e->file_priv->event_list);
+#ifdef __NetBSD__
+	DRM_SPIN_WAKEUP_ONE(&e->base.file_priv->event_wait, &dev->event_lock);
+	selnotify(&e->base.file_priv->event_selq, (POLLIN | POLLRDNORM),
+	    NOTE_SUBMIT);
+#else
 	wake_up_interruptible(&e->file_priv->event_wait);
+#endif
 }
 EXPORT_SYMBOL(drm_send_event_locked);
 
