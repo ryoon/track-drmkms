@@ -547,7 +547,7 @@ int drm_irq_install(struct drm_device *dev, int irq)
 
 #ifdef __NetBSD__
 	ret = (*dev->driver->bus->irq_install)(dev, dev->driver->irq_handler,
-	    sh_flags, irqname, dev, &dev->irq_cookie);
+	    sh_flags, dev->driver->name, dev, &dev->irq_cookie);
 #else
 	ret = request_irq(irq, dev->driver->irq_handler,
 			  sh_flags, dev->driver->name, dev);
