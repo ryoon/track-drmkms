@@ -932,7 +932,11 @@ static u32 *vmap_batch(struct drm_i915_gem_object *obj,
 {
 	int i;
 	void *addr = NULL;
+#ifdef __NetBSD__
+	struct vm_page *page;
+#else
 	struct sg_page_iter sg_iter;
+#endif
 	int first_page = start >> PAGE_SHIFT;
 	int last_page = (len + start + 4095) >> PAGE_SHIFT;
 	int npages = last_page - first_page;
@@ -945,11 +949,19 @@ static u32 *vmap_batch(struct drm_i915_gem_object *obj,
 	}
 
 	i = 0;
+#ifdef __NetBSD__
+	TAILQ_FOREACH(page, &obj->igo_pageq, pageq.queue) {
+		pages[i++] = container_of(page, struct page, p_vmp);
+		if (i == npages)
+			break;
+	}
+#else
 	for_each_sg_page(obj->pages->sgl, &sg_iter, obj->pages->nents, first_page) {
 		pages[i++] = sg_page_iter_page(&sg_iter);
 		if (i == npages)
 			break;
 	}
+#endif
 
 	addr = vmap(pages, i, 0, PAGE_KERNEL);
 	if (addr == NULL) {
@@ -1185,7 +1197,8 @@ int i915_parse_cmds(struct intel_engine_cs *engine,
 		    bool is_master)
 {
 	u32 *cmd, *batch_base, *batch_end;
-	struct drm_i915_cmd_descriptor default_desc = { 0 };
+	static const struct drm_i915_cmd_descriptor zero_default_desc;
+	struct drm_i915_cmd_descriptor default_desc = zero_default_desc;
 	bool oacontrol_set = false; /* OACONTROL tracking. See check_cmd() */
 	int ret = 0;
 
@@ -1262,7 +1275,11 @@ int i915_parse_cmds(struct intel_engine_cs *engine,
 		ret = -EINVAL;
 	}
 
+#ifdef __NetBSD__
+	vunmap(batch_base, batch_obj->base.size / PAGE_SIZE);
+#else
 	vunmap(batch_base);
+#endif
 
 	return ret;
 }
