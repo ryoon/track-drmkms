@@ -24,6 +24,7 @@
  */
 
 #include <linux/list.h>
+#include <linux/export.h>
 #include <drm/drmP.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_rect.h>
